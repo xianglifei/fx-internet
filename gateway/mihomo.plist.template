@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- fx-gateway:mihomo 内核(launchd 直管,崩溃自动拉起) -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.mihomo</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/.local/bin/mihomo</string>
+        <string>-d</string>
+        <string>__HOME__/Library/Application Support/fx-internet</string>
+        <string>-f</string>
+        <string>__HOME__/Library/Application Support/fx-internet/runtime.yaml</string>
+        <string>-ext-ctl-unix</string>
+        <string>__HOME__/Library/Application Support/fx-internet/fx-mihomo.sock</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Application Support/fx-internet/logs/mihomo.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Application Support/fx-internet/logs/mihomo.stderr.log</string>
+</dict>
+</plist>

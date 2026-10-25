@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- fx-gateway:桥接服务(UI + API 聚合 + 系统代理守护) -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.fx-bridge</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/python3</string>
+        <string>__HOME__/.local/bin/fx-bridge.py</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>FX_BRIDGE_PORT</key>
+        <string>7900</string>
+        <key>FX_STATE_DIR</key>
+        <string>__HOME__/Library/Application Support/fx-internet</string>
+        <key>FX_MIXED_PORT</key>
+        <string>__MIXED_PORT__</string>
+        <key>FX_SYSAPPLY</key>
+        <string>__SYSAPPLY__</string>
+        <key>FX_EVENTS_PATH</key>
+        <string>__EVENTS__</string>
+        <key>FX_PATROL_STATE</key>
+        <string>__PSTATE__</string>
+        <key>FX_PATROL_LOG</key>
+        <string>__PLOG__</string>
+        <key>FX_PATROL_PROXY</key>
+        <string>__PPROXY__</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Application Support/fx-internet/logs/fx-bridge.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Application Support/fx-internet/logs/fx-bridge.stderr.log</string>
+</dict>
+</plist>
