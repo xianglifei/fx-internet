@@ -42,10 +42,11 @@ curl -s http://127.0.0.1:7900/api/status | python3 -m json.tool
 # 界面:浏览器开 http://127.0.0.1:7900 或点菜单栏三色点
 
 # 动作(等价界面按钮)
-curl -X POST http://127.0.0.1:7900/api/actions/patrol-now      # 立即巡检
-curl -X POST http://127.0.0.1:7900/api/actions/handoff-auto    # 交还常规模式
-curl -X POST http://127.0.0.1:7900/api/actions/kernel-restart  # 重启内核
-curl -X POST http://127.0.0.1:7900/api/actions/kernel-stop     # 停内核(自动先清系统代理)
+TOKEN=$(curl -fsS http://127.0.0.1:7900/api/token | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+curl -H "X-FX-Token: $TOKEN" -X POST http://127.0.0.1:7900/api/actions/patrol-now      # 立即巡检
+curl -H "X-FX-Token: $TOKEN" -X POST http://127.0.0.1:7900/api/actions/handoff-auto    # 交还常规模式
+curl -H "X-FX-Token: $TOKEN" -X POST http://127.0.0.1:7900/api/actions/kernel-restart  # 重启内核
+curl -H "X-FX-Token: $TOKEN" -X POST http://127.0.0.1:7900/api/actions/kernel-stop     # 停内核(自动先清系统代理)
 
 # 内核 API(bridge 透传)
 curl -s http://127.0.0.1:7900/api/mihomo/proxies | python3 -m json.tool | head
@@ -90,7 +91,7 @@ gateway/teardown.sh --full   # 切换后反悔:停自研栈,巡检改回,重开 
   root LaunchDaemon 执行代理写入(参照 Verge 的 service mode 思路),或临时 `sudo` 手动设一次。
 - **TUN 模式**:本栈不启用(与 Verge 现状一致)。将来要 TUN 需 root 运行 mihomo,另行评估。
 - **订阅更新**:完全由内核 provider 自管;若换订阅地址,改 `…/fx-internet/subscription.txt`
-  后 `POST /api/actions/apply-config`(或重跑 build-config.py)。
+  后运行 `gateway/build-config.py --port 7897`，校验成功后重启内核以加载新配置。
 - **mihomo 升级**:换 `~/.local/bin/mihomo` 二进制后 `kernel-restart`;版本回退同理。
 - **geo 数据**:内核目录内独立副本,与 Verge 无关;更新即替换文件 + 重启。
 
@@ -107,12 +108,22 @@ gateway/teardown.sh --full   # 切换后反悔:停自研栈,巡检改回,重开 
 
 | 变量 | 默认 | 含义 |
 |---|---|---|
-| `FX_QUOTA_MB` | 250 | 每日探测流量配额(展示口径,面板进度条) |
+| `FX_QUOTA_MB` | 250 | 每日常规探测预算，故障恢复预留另计 |
 | `FX_PATROL_MINUTE` | 10 | 巡检调度分钟(需与 patrol plist 的 :10 一致) |
 | `PATROL_NODE_FILTER` | JMS | 巡检节点名过滤子串(换服务商时改) |
-| `FX_SKIP_RESTART` | 0 | selftest 跳过内核重启项(生产机跑冒烟时设 1) |
+| `FX_SKIP_RESTART` | 0 | 启用动作测试后，可进一步跳过内核重启项 |
 
 ## 与旧文档的关系
 
 `docs/operations.md` 的巡检日志解读、故障排查路径仍然适用;端口/入口相关的命令以本手册为准。
 `docs/runbook.md` 是 Verge 时代的迁移手册,切换完成后仅作历史参考。
+
+## 修复后的操作与验证
+
+- `gateway/selftest.sh` 默认只读，不切换出口、不重启、不触发巡检；允许修改网络状态时才设置 `FX_ALLOW_MUTATIONS=1`。
+- 写接口需先 `GET /api/token`，再以 `X-FX-Token` 请求头提交。浏览器请求同时校验 Origin，跨站来源被拒绝。
+- 巡检日预算：`PATROL_QUOTA_MB` 默认 250 MB；故障恢复额外预留 `PATROL_EMERGENCY_MB` 默认 52 MB。预算耗尽后仍检查连通性，不再下载测速文件。
+- 使用量保存在 `events.jsonl.usage.json`，不随事件截断丢失；旧事件的固定估算不会转换为真实字节，首次升级从零计量。预算不包含 TLS/HTTP 协议开销。
+- 扫描期间临时切换真实出口，结束和异常均恢复原出口，再单独提交决策；仍建议后续迁移为独立测速分组以减少对新连接的影响。
+- 部署前运行 `python3 -m unittest discover -s tests -v`。现有机器需同步脚本、UI，并让定时巡检的 `PATROL_QUOTA_MB` 与桥的 `FX_QUOTA_MB` 一致。
+- `teardown.sh` 依赖桥执行安全停机；桥不可用时停止拆除，请使用紧急恢复手册。生产栈必须指定 `--full`。

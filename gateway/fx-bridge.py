@@ -23,6 +23,7 @@ import fcntl
 import json
 import os
 import re
+import secrets
 import subprocess
 import threading
 import time
@@ -60,6 +61,7 @@ PATROL_ENV = {
     "PATROL_LOG": env("FX_PATROL_LOG", os.path.join(
         HOME, "Library/Logs/verge-node-patrol.log")),
     "PATROL_LOCK": PATROL_LOCK,
+    "PATROL_QUOTA_MB": env("FX_QUOTA_MB", "250"),
     "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
 }
 QUOTA_MB = int(env("FX_QUOTA_MB", "250"))       # 每日探测流量配额(展示口径)
@@ -71,6 +73,9 @@ BYPASS = ["127.0.0.1", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12",
 
 # 监测线程 2s 刷新;/proxies 一并缓存,请求路径免子进程
 MON = {"kernel": None, "mbps": 0.0, "conns": 0, "proxies": {}, "ts": 0}
+KERNEL_WANTED = True
+CONTROL_LOCK = threading.RLock()
+WRITE_TOKEN = secrets.token_urlsafe(32)
 SYS = {"ok": None, "applied": False, "requires_admin": False,
        "error": None, "ts": 0}                                 # 30s 守护线程
 
@@ -81,15 +86,21 @@ def log(msg):
 
 def mi(method, path, data=None, timeout=5):
     """经 unix socket 调 mihomo REST API(curl 实现,与巡检同款)"""
-    cmd = ["curl", "-s", "--unix-socket", SOCK, "-X", method,
-           f"http://localhost{path}", "--max-time", str(timeout)]
+    cmd = ["curl", "-sS", "--noproxy", "*", "--unix-socket", SOCK, "-X", method,
+           f"http://localhost{path}", "--max-time", str(timeout), "-w", "\n%{http_code}"]
     if data is not None:
         cmd += ["-d", json.dumps(data)]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 3)
-        return json.loads(r.stdout) if r.stdout.strip() else {}
-    except Exception:
-        return {}
+        body, status = r.stdout.rsplit("\n", 1)
+        if r.returncode or not 200 <= int(status) < 300:
+            raise RuntimeError(f"mihomo request failed ({status})")
+        result = json.loads(body) if body.strip() else {}
+        if not isinstance(result, dict):
+            raise ValueError("unexpected API response")
+        return result
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        raise RuntimeError("mihomo API unavailable") from e
 
 
 def short(name):
@@ -122,6 +133,8 @@ def monitor_loop():
             MON.update(kernel=ver.get("version"), mbps=round(mbps, 1),
                        conns=n, proxies=proxies.get("proxies", {}), ts=now)
         except Exception as e:
+            prev_total = prev_ts = None
+            MON.update(kernel=None, proxies={}, mbps=0, error=str(e), ts=time.time())
             log(f"监测线程异常(下拍重试): {e}")
         time.sleep(2)
 
@@ -144,12 +157,12 @@ def read_sysproxy():
 
 
 def network_services():
-    try:
-        out = subprocess.run(["networksetup", "-listallnetworkservices"],
-                             capture_output=True, text=True, timeout=5).stdout
-        return [l.strip() for l in out.splitlines()[1:] if l.strip() and not l.startswith("*")]
-    except Exception:
-        return []
+    r = subprocess.run(["networksetup", "-listallnetworkservices"],
+                       capture_output=True, text=True, timeout=5)
+    if r.returncode or not r.stdout.strip():
+        raise RuntimeError("无法枚举网络服务，取消代理清理")
+    return [l.strip() for l in r.stdout.splitlines()[1:]
+            if l.strip() and not l.startswith("*")]
 
 
 def primary_service():
@@ -194,45 +207,65 @@ def apply_proxy_to_service(svc, enable):
     return None
 
 
+def proxy_matches(cur):
+    return all(cur.get(k + "Enable") == "1"
+               and cur.get(k + "Proxy") == "127.0.0.1"
+               and cur.get(k + "Port") == str(MIXED_PORT)
+               for k in ("HTTP", "HTTPS", "SOCKS"))
+
+
+def clear_owned_proxies():
+    """仅关闭指向本实例的代理项；失败抛出，禁止继续停内核。"""
+    for svc in network_services():
+        for getter, setter in (("-getwebproxy", "-setwebproxystate"),
+                               ("-getsecurewebproxy", "-setsecurewebproxystate"),
+                               ("-getsocksfirewallproxy", "-setsocksfirewallproxystate")):
+            r = subprocess.run(["networksetup", getter, svc], capture_output=True,
+                               text=True, timeout=5)
+            if r.returncode:
+                raise RuntimeError(f"无法读取 {svc} 代理")
+            fields = dict(line.split(": ", 1) for line in r.stdout.splitlines() if ": " in line)
+            if (fields.get("Enabled") == "Yes" and fields.get("Server") == "127.0.0.1"
+                    and fields.get("Port") == str(MIXED_PORT)):
+                r = subprocess.run(["networksetup", setter, svc, "off"],
+                                   capture_output=True, text=True, timeout=10)
+                if r.returncode or "admin" in (r.stdout + r.stderr).lower():
+                    raise RuntimeError(f"无法清理 {svc} 代理，需要检查权限")
+
+
+def guard_once():
+    with CONTROL_LOCK:
+        if not MON.get("ts"):
+            return
+        cur = read_sysproxy()
+        applied = proxy_matches(cur)
+        if SYSAPPLY:
+            if KERNEL_WANTED and MON.get("kernel") and time.time() - MON["ts"] < 30:
+                if not applied:
+                    svc = primary_service()
+                    if not svc:
+                        raise RuntimeError("无法定位默认网络服务")
+                    err = apply_proxy_to_service(svc, enable=True)
+                    if err:
+                        SYS.update(ok=False, applied=False, error=err,
+                                   requires_admin=err == "requires_admin", ts=time.time())
+                        return
+                    applied = proxy_matches(read_sysproxy())
+                    if not applied:
+                        raise RuntimeError("系统代理写入后验证失败")
+            else:
+                clear_owned_proxies()
+                applied = False
+        SYS.update(ok=True, applied=applied, error=None,
+                   requires_admin=False, ts=time.time())
+
+
 def guard_loop():
     while True:
         try:
-            # 启动等待:监测线程首拍未落地(MON.ts==0)前不做任何判断,
-            # 否则会把"尚未测量"误判为"内核不在"而清掉系统代理(重启后断流 ≤30s 的竞态)
-            if not MON.get("ts"):
-                time.sleep(1)
-                continue
-            cur = read_sysproxy()
-            kernel_up = bool(MON.get("kernel"))
-            if SYSAPPLY and kernel_up:
-                want_on = (cur.get("HTTPEnable") == "1" and cur.get("HTTPProxy") == "127.0.0.1"
-                           and cur.get("HTTPPort") == str(MIXED_PORT))
-                if not want_on:
-                    # 定位当前默认路由的网络服务,把代理设上去(跟随 Wi-Fi/网线切换)
-                    svc = primary_service() or "Wi-Fi"
-                    err = apply_proxy_to_service(svc, enable=True)
-                    SYS.update(ok=err is None, applied=err is None, error=err,
-                               requires_admin=err == "requires_admin", ts=time.time())
-                else:
-                    SYS.update(ok=True, applied=True, error=None,
-                               requires_admin=False, ts=time.time())
-            elif SYSAPPLY and not kernel_up:
-                # 内核不在:清掉指向死端口的代理,浏览器直连(停机顺序原则)
-                for svc in network_services():
-                    out = subprocess.run(["networksetup", "-getwebproxy", svc],
-                                         capture_output=True, text=True, timeout=5).stdout
-                    if "Enabled: Yes" in out:
-                        apply_proxy_to_service(svc, enable=False)
-                SYS.update(ok=True, applied=False, error=None,
-                           requires_admin=False, ts=time.time())
-            else:
-                # 试运行 dry-run:只报告不写
-                SYS.update(
-                    ok=True,
-                    applied=cur.get("HTTPEnable") == "1",
-                    error=None, requires_admin=False, ts=time.time())
+            guard_once()
         except Exception as e:
-            SYS.update(ok=False, error=str(e), ts=time.time())
+            SYS.update(ok=False, applied=False, error=str(e), ts=time.time())
         time.sleep(30)
 
 
@@ -276,17 +309,31 @@ def build_status():
     events = read_events()
     last = events[-1] if events else None
     today = f"{datetime.date.today():%Y-%m-%d}"
-    cost_today = sum(int(e.get("cost_mb", 0)) for e in events
-                     if str(e.get("ts", "")).startswith(today))
+    try:
+        with open(EVENTS_PATH + ".usage.json") as f:
+            usage = json.load(f)
+        cost_today = usage.get("bytes", 0) / 1e6 if usage.get("date") == today else 0
+    except (OSError, ValueError):
+        cost_today = sum(float(e.get("cost_mb", 0)) for e in events
+                         if str(e.get("ts", "")).startswith(today))
 
     kernel_up = bool(MON.get("kernel"))
     level, reason = "green", "steady"
-    if not kernel_up:
+    if not MON.get("ts") or time.time() - MON["ts"] > 30:
+        level, reason = "yellow", "status_unknown"
+    elif not kernel_up:
         level, reason = "red", "kernel_down"
     elif last and last.get("type") == "all_dead":
         level, reason = "red", "all_dead"
     elif SYS.get("requires_admin"):
         level, reason = "yellow", "sysproxy_requires_admin"
+    elif not any(n != "AUTO" for n in proxies.get("PROXY", {}).get("all", [])) or not proxy_now:
+        level, reason = "red", "no_nodes"
+    elif SYSAPPLY and (not SYS.get("ok") or time.time() - SYS.get("ts", 0) > 65):
+        level, reason = "yellow", "sysproxy_off"
+    elif not last or last.get("type") in ("error", "skip", "budget_exhausted") or (
+            datetime.datetime.now() - datetime.datetime.fromisoformat(last["ts"])).total_seconds() > 7200:
+        level, reason = "yellow", "patrol_unknown"
     elif pinned:
         level, reason = "yellow", "pinned"
     elif SYSAPPLY and not SYS.get("applied"):
@@ -307,7 +354,7 @@ def build_status():
                                  "bypass": BYPASS},
                      "error": SYS.get("error")},
         "patrol": {"last_event": last, "events": events[-20:],
-                   "cost_today_mb": cost_today, "quota_mb": QUOTA_MB,
+                   "cost_today_mb": round(cost_today, 2), "quota_mb": QUOTA_MB,
                    "next_run": next_patrol_time()},
         "derived": {"level": level, "reason": reason},
     }
@@ -344,23 +391,50 @@ def run_patrol():
     return True, "已触发"
 
 
+def handoff_auto():
+    with CONTROL_LOCK:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        # 与巡检共用锁，防止人工交还被正在扫描的巡检覆盖。
+        with open(PATROL_LOCK, "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            mi("PUT", "/proxies/PROXY", {"name": "AUTO"})
+            if mi("GET", "/proxies/PROXY").get("now") != "AUTO":
+                raise RuntimeError("交还后验证失败")
+    return True, "已交还常规模式"
+
+
+def start_kernel(restart=False):
+    global KERNEL_WANTED
+    with CONTROL_LOCK:
+        if not launchctl("print", f"gui/{UID_N}/local.mihomo")[0]:
+            result = launchctl("bootstrap", f"gui/{UID_N}", PLIST_MIHOMO)
+        else:
+            args = ["kickstart"] + (["-k"] if restart else [])
+            result = launchctl(*args, f"gui/{UID_N}/local.mihomo")
+        if result[0]:
+            KERNEL_WANTED = True
+        return result
+
+
 ACTIONS = {
     "patrol-now": lambda: run_patrol(),
-    "kernel-start": lambda: launchctl("bootstrap", f"gui/{UID_N}", PLIST_MIHOMO)
-    if not launchctl("print", f"gui/{UID_N}/local.mihomo")[0]
-    else launchctl("kickstart", f"gui/{UID_N}/local.mihomo"),
-    "kernel-restart": lambda: launchctl("kickstart", "-k", f"gui/{UID_N}/local.mihomo"),
-    "handoff-auto": lambda: (True, "已交还常规模式") if mi(
-        "PUT", "/proxies/PROXY", {"name": "AUTO"}) is not None else (False, "API 无响应"),
+    "kernel-start": lambda: start_kernel(),
+    "kernel-restart": lambda: start_kernel(restart=True),
+    "handoff-auto": handoff_auto,
 }
 
 
 def do_kernel_stop():
     # 停机顺序:先清系统代理,再停内核
-    if SYSAPPLY:
-        for svc in network_services():
-            apply_proxy_to_service(svc, enable=False)
-    return launchctl("bootout", f"gui/{UID_N}/local.mihomo")
+    global KERNEL_WANTED
+    with CONTROL_LOCK:
+        if SYSAPPLY:
+            clear_owned_proxies()
+        result = launchctl("bootout", f"gui/{UID_N}/local.mihomo")
+        if result[0]:
+            KERNEL_WANTED = False
+            MON.update(kernel=None, proxies={}, ts=time.time())
+        return result
 
 
 # ---------- HTTP ----------
@@ -385,6 +459,19 @@ class Handler(BaseHTTPRequestHandler):
         host = (self.headers.get("Host") or "").strip().lower()
         return host in (f"127.0.0.1:{BRIDGE_PORT}", f"localhost:{BRIDGE_PORT}")
 
+    def _write_ok(self):
+        origin = self.headers.get("Origin")
+        return (self._host_ok() and
+                (origin is None or origin in (f"http://127.0.0.1:{BRIDGE_PORT}",
+                                              f"http://localhost:{BRIDGE_PORT}")) and
+                self.headers.get("X-FX-Token") == WRITE_TOKEN)
+
+    def _upstream(self, method, path, data=None):
+        try:
+            self._json(mi(method, path, data))
+        except RuntimeError as e:
+            self._json({"error": str(e)}, 502)
+
     def do_GET(self):
         if not self._host_ok():
             return self._json({"error": "bad host"}, 403)
@@ -399,46 +486,53 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
             except OSError:
                 self._json({"error": "UI 文件缺失"}, 500)
+        elif self.path == "/api/token":
+            self._json({"token": WRITE_TOKEN})
         elif self.path == "/api/status":
             self._json(build_status())
         elif self.path == "/api/events":
             self._json({"events": read_events()})
         elif self.path.startswith("/api/mihomo/"):
             path = self.path[len("/api/mihomo"):]
-            self._json(mi("GET", path))
+            self._upstream("GET", path)
         else:
             self._json({"error": "not found"}, 404)
 
     def do_PUT(self):
-        if not self._host_ok():
-            return self._json({"error": "bad host"}, 403)
+        if not self._write_ok():
+            return self._json({"error": "write authorization required"}, 403)
         if self.path.startswith("/api/mihomo/"):
             path = self.path[len("/api/mihomo"):]
             try:
-                length = min(int(self.headers.get("Content-Length") or 0), 65536)
+                length = int(self.headers.get("Content-Length") or 0)
+                if not 0 <= length <= 65536:
+                    return self._json({"error": "body too large"}, 413)
             except ValueError:
-                length = 0
+                return self._json({"error": "bad length"}, 400)
             try:
                 raw = self.rfile.read(length) if length > 0 else b""
                 data = json.loads(raw) if raw.strip() else None
             except (ValueError, OSError):
                 return self._json({"error": "bad json"}, 400)
-            self._json(mi("PUT", path, data))
+            self._upstream("PUT", path, data)
         else:
             self._json({"error": "not found"}, 404)
 
     def do_POST(self):
-        if not self._host_ok():
-            return self._json({"error": "bad host"}, 403)
+        if not self._write_ok():
+            return self._json({"error": "write authorization required"}, 403)
         if self.path.startswith("/api/actions/"):
             name = self.path.rsplit("/", 1)[-1]
-            if name == "kernel-stop":
-                ok, msg = do_kernel_stop()
-            elif name in ACTIONS:
-                ok, msg = ACTIONS[name]()
-            else:
-                return self._json({"error": "unknown action"}, 404)
-            self._json({"ok": bool(ok), "msg": str(msg)})
+            try:
+                if name == "kernel-stop":
+                    ok, msg = do_kernel_stop()
+                elif name in ACTIONS:
+                    ok, msg = ACTIONS[name]()
+                else:
+                    return self._json({"error": "unknown action"}, 404)
+                self._json({"ok": bool(ok), "msg": str(msg)}, 200 if ok else 503)
+            except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+                self._json({"ok": False, "msg": str(e)}, 503)
         else:
             self._json({"error": "not found"}, 404)
 

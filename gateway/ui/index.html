@@ -176,6 +176,7 @@
            : e.reason === "already_running" ? "已有巡检在运行,本次跳过"
            : "巡检跳过:" + (e.reason || "未知原因");
     },
+    budget_exhausted: function(e){ return "探测预算已用尽，保留连通性检查"; },
     error: function(e){ return "巡检异常:"+e.error; }
   };
 
@@ -187,6 +188,9 @@
   }
 
   var HEAD = {
+    status_unknown: ["状态数据已过期", "等待监测恢复，请查看桥接日志。"],
+    no_nodes: ["没有可用节点配置", "请检查订阅与内核配置。"],
+    patrol_unknown: ["巡检状态待确认", "最近巡检失败、跳过或数据已过期，请查看详情。"],
     green:  ["一切正常", null],
     pinned: ["网络偏慢,已自动切换到最快节点",
              "晚高峰链路拥堵。拥堵消退并复测达标后,系统会自动切回常规模式,期间无需任何操作。"],
@@ -252,7 +256,7 @@
       sysproxy_requires_admin: "macOS 拒绝了代理设置请求(networksetup 返回需要管理员权限)。执行 runbook 中的授权步骤后恢复。",
       sysproxy_off: "系统代理当前未指向本内核。守护线程每 30 秒自动纠正。"
     };
-    $("d-exp").textContent = expMap[d.reason] || expMap.steady;
+    $("d-exp").textContent = expMap[d.reason] || head[1] || expMap.steady;
 
     // 节点池
     if(nodes.length && sweep){
@@ -313,10 +317,11 @@
 
   function act(name, btn){
     if(btn){ btn.disabled = true; setTimeout(function(){ btn.disabled = false; }, 8000); }
-    fetch("/api/actions/" + name, { method: "POST" })
+    fetch("/api/token").then(function(r){ if(!r.ok) throw Error("无法获取操作凭证"); return r.json(); })
+      .then(function(auth){ return fetch("/api/actions/" + name, { method: "POST", headers: {"X-FX-Token": auth.token} }); })
       .then(function(r){ return r.json(); })
-      .then(function(j){ setTimeout(poll, name === "patrol-now" ? 6000 : 2000); })
-      .catch(function(){});
+      .then(function(j){ if(!j.ok) throw Error(j.msg || "操作失败"); setTimeout(poll, name === "patrol-now" ? 6000 : 2000); })
+      .catch(function(e){ $("st-text").textContent = e.message || "操作失败"; });
   }
 
   $("open-btn").addEventListener("click", function(){

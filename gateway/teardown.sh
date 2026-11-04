@@ -8,6 +8,16 @@ LA="$HOME/Library/LaunchAgents"
 
 bootout_safe(){ launchctl bootout "gui/$UID_N/$1" 2>/dev/null || true; }
 
+# 使用桥的受保护停机流程：清本实例代理成功后才停内核；失败则保留服务。
+STATUS=$(curl -fsS --max-time 5 http://127.0.0.1:7900/api/status)
+MODE=$(printf '%s' "$STATUS" | python3 -c 'import json,sys; print(json.load(sys.stdin)["sysproxy"]["apply_mode"])')
+if [[ "$MODE" == "active" && "${1:-}" != "--full" ]]; then
+  echo "生产栈需使用 --full 回退；未执行拆除" >&2
+  exit 1
+fi
+TOKEN=$(curl -fsS http://127.0.0.1:7900/api/token | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+curl -fsS --max-time 60 -H "X-FX-Token: $TOKEN" -X POST \
+  http://127.0.0.1:7900/api/actions/kernel-stop | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("ok") else 1)'
 bootout_safe local.mihomo
 bootout_safe local.fx-bridge
 rm -f "$LA/local.mihomo.plist" "$LA/local.fx-bridge.plist"

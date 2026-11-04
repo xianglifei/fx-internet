@@ -8,7 +8,7 @@ import ServiceManagement
 
 let BRIDGE = "http://127.0.0.1:7900"
 
-final class PanelController: NSObject, WKScriptMessageHandler {
+final class PanelController: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     let popover = NSPopover()
     let web = WKWebView()
@@ -49,6 +49,7 @@ final class PanelController: NSObject, WKScriptMessageHandler {
         // 页面常驻(打开即最新,不重载避免闪白与尺寸跳变)
         web.configuration.userContentController.add(self, name: "panelSize")
         web.setValue(false, forKey: "drawsBackground")  // 透明贴合气泡
+        web.navigationDelegate = self
         web.load(URLRequest(url: URL(string: BRIDGE + "/")!))
 
         let vc = NSViewController()
@@ -60,6 +61,12 @@ final class PanelController: NSObject, WKScriptMessageHandler {
         // 幂等注册登录自启(替代 Verge 的开机自启角色)
         if #available(macOS 13.0, *) {
             try? SMAppService.mainApp.register()
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            self?.web.load(URLRequest(url: URL(string: BRIDGE + "/")!))
         }
     }
 

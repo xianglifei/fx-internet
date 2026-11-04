@@ -44,7 +44,49 @@ PATROL_LOCK = os.environ.get(
         "~/Library/Application Support/fx-internet/patrol.lock"))
 NODE_FILTER = os.environ.get("PATROL_NODE_FILTER", "JMS")
 
+QUOTA_MB = float(os.environ.get("PATROL_QUOTA_MB", "250"))
+EMERGENCY_MB = float(os.environ.get("PATROL_EMERGENCY_MB", "52"))
+USAGE_PATH = EVENTS_PATH + ".usage.json"
+RUN_BYTES = 0
+EMERGENCY = False
+
+
+class BudgetExceeded(RuntimeError):
+    pass
+
+
+def usage():
+    today = datetime.date.today().isoformat()
+    try:
+        with open(USAGE_PATH) as f:
+            rec = json.load(f)
+        if rec.get("date") == today:
+            return rec
+    except (OSError, ValueError):
+        pass
+    return {"date": today, "bytes": 0}
+
+
+def charge(count):
+    global RUN_BYTES
+    RUN_BYTES += count
+    rec = usage()
+    rec["bytes"] += count
+    os.makedirs(os.path.dirname(USAGE_PATH), exist_ok=True)
+    tmp = USAGE_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(rec, f)
+    os.replace(tmp, USAGE_PATH)
+
+
+def check_budget(count):
+    limit = (QUOTA_MB + (EMERGENCY_MB if EMERGENCY else 0)) * 1e6
+    if usage()["bytes"] + count > limit:
+        raise BudgetExceeded("今日探测预算已用尽，下次巡检继续检查连通性")
+
+
 def log(msg):
+    os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
     with open(LOG_PATH, "a") as f:
         f.write(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] {msg}\n")
 
@@ -53,6 +95,7 @@ def event(etype, **data):
     有界增长:文件超 256KB 时原子截留最近 500 行。"""
     rec = {"ts": datetime.datetime.now().isoformat(timespec="seconds"),
            "type": etype}
+    data["cost_mb"] = round(RUN_BYTES / 1e6, 4)
     rec.update(data)
     try:
         os.makedirs(os.path.dirname(EVENTS_PATH), exist_ok=True)
@@ -111,51 +154,95 @@ def find_socket():
     return m.group(1).strip() if m else None
 
 def api(sock, method, path, data=None):
-    cmd = ["curl", "-s", "--unix-socket", sock, "-X", method,
-           f"http://localhost{path}", "--max-time", "6"]
+    cmd = ["curl", "-sS", "--noproxy", "*", "--unix-socket", sock, "-X", method,
+           f"http://localhost{path}", "--max-time", "6", "-w", "\n%{http_code}"]
     if data is not None:
         cmd += ["-d", json.dumps(data)]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
     try:
-        return json.loads(subprocess.run(
-            cmd, capture_output=True, text=True, timeout=10).stdout)
+        body, code = r.stdout.rsplit("\n", 1)
+        if r.returncode or not 200 <= int(code) < 300:
+            raise ValueError("API failed")
+        result = json.loads(body) if body.strip() else {}
+        if not isinstance(result, dict):
+            raise ValueError("unexpected API response")
+        return result
+    except ValueError as e:
+        raise RuntimeError("mihomo API 请求失败") from e
+
+
+def select(sock, name):
+    path = "/proxies/PROXY"
+    original = api(sock, "GET", path).get("now")
+    if not original:
+        raise RuntimeError("无法读取原出口，取消切换")
+    try:
+        api(sock, "PUT", path, {"name": name})
+        if api(sock, "GET", path).get("now") != name:
+            raise RuntimeError("节点切换后验证失败")
     except Exception:
-        return {}
+        # 请求可能已生效但响应丢失，尝试恢复原出口并让调用者报告失败。
+        api(sock, "PUT", path, {"name": original})
+        raise
+
 
 def short(name):
     return name.split("@")[-1] if "@" in name else name
 
-def curl_measure(url, max_time):
-    cmd = ["curl", "-sx", MIXED_PROXY, "-o", "/dev/null",
-           "-w", "%{http_code} %{speed_download}", "--max-time", str(max_time), url]
+def curl_measure(url, max_time, expected_bytes=None):
+    cmd = ["curl", "-sS", "--noproxy", "", "--proxy", MIXED_PROXY,
+           "-o", "/dev/null", "-w", "%{http_code} %{speed_download} %{size_download}",
+           "--max-time", str(max_time), url]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True,
-                           timeout=max_time + 5).stdout.split()
-        if len(r) >= 2:
-            return r[0], float(r[1])
-    except Exception:
-        pass
-    return "000", 0.0
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=max_time + 5)
+        fields = r.stdout.split()
+        code, speed, count = fields[0], float(fields[1]), int(float(fields[2]))
+        if count < 0:
+            raise ValueError("invalid byte count")
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return "000", 0.0
+    charge(count)
+    if r.returncode or (expected_bytes is not None and
+                        (code != "200" or count != expected_bytes)):
+        return "000", 0.0
+    return code, speed
+
 
 def alive():
     return curl_measure("https://www.gstatic.com/generate_204", 8)[0] == "204"
 
+
 def measure(bytes_):
     if not alive():
         return False, 0.0
-    _, sp = curl_measure(f"https://speed.cloudflare.com/__down?bytes={bytes_}", 14)
+    check_budget(bytes_)
+    code, sp = curl_measure(f"https://speed.cloudflare.com/__down?bytes={bytes_}", 14, bytes_)
+    if code != "200":
+        raise RuntimeError("测速服务异常或下载不完整，保留原出口")
     return True, sp * 8 / 1e6
 
+
 def sweep(sock, nodes):
-    """逐节点实测,返回 {节点名: Mbps}(挂了的为 0)"""
+    """临时切换测速，任何退出路径都恢复原出口；决策由调用者单独提交。"""
+    original = api(sock, "GET", "/proxies/PROXY").get("now")
+    if not original:
+        raise RuntimeError("无法读取原出口，取消扫描")
     results = {}
-    for n in nodes:
-        api(sock, "PUT", "/proxies/PROXY", {"name": n})
-        ok, m = measure(SWEEP_BYTES)
-        results[n] = m if ok else 0.0
-        log(f"  扫描 {short(n)}: {'挂了' if not ok else f'{m:.1f}Mbps'}")
-    return results
+    try:
+        for n in nodes:
+            select(sock, n)
+            ok, m = measure(SWEEP_BYTES)
+            results[n] = m if ok else 0.0
+            log(f"  扫描 {short(n)}: {m:.1f}Mbps")
+        return results
+    finally:
+        select(sock, original)
+
 
 def main():
+    global RUN_BYTES, EMERGENCY
+    RUN_BYTES = 0
+    EMERGENCY = False
     lock = acquire_lock()
     if lock is None:
         log("已有巡检在运行(桥触发/launchd 并发),本次静默退出")
@@ -179,8 +266,17 @@ def main():
                  if cur_group == "AUTO" else cur_group)
     pinned = cur_group != "AUTO"
 
-    ok, mbps = measure(PROBE_BYTES)
+    try:
+        if not alive():
+            EMERGENCY = True
+            ok, mbps = False, 0.0
+        else:
+            ok, mbps = measure(PROBE_BYTES)
+    except BudgetExceeded as e:
+        event("budget_exhausted", message=str(e))
+        return
     if not ok:
+        EMERGENCY = True
         log(f"出口 {short(effective)} 无响应,立即全量扫描")
         res = sweep(sock, nodes)
         live = {n: m for n, m in res.items() if m > 0}
@@ -190,7 +286,7 @@ def main():
             save_state({"good_streak": 0})
             return
         best = max(live, key=live.get)
-        api(sock, "PUT", "/proxies/PROXY", {"name": best})
+        select(sock, best)
         log(f"切换 PROXY → {short(best)} ({live[best]:.1f}Mbps)")
         event("fault_switch", prev=short(effective), to=short(best),
               mbps=round(live[best], 1), sweep={short(n): round(m, 1) for n, m in res.items()},
@@ -216,14 +312,14 @@ def main():
             return
         best = max(live, key=live.get)
         if live[best] >= max(mbps * BETTER_RATIO, 5.0):
-            api(sock, "PUT", "/proxies/PROXY", {"name": best})
+            select(sock, best)
             log(f"拥堵介入:PROXY → {short(best)} ({live[best]:.1f}Mbps,"
                 f"原 AUTO/{short(effective)} {mbps:.1f}Mbps)")
             event("congestion_pin", auto_pick=short(effective), to=short(best),
                   mbps=round(live[best], 1), prev_mbps=round(mbps, 1),
                   sweep={short(n): round(m, 1) for n, m in res.items()}, cost_mb=52)
         else:
-            api(sock, "PUT", "/proxies/PROXY", {"name": "AUTO"})
+            select(sock, "AUTO")
             log("无更优节点,保持 AUTO")
             event("keep_auto", exit=short(effective), mbps=round(mbps, 1),
                   sweep={short(n): round(m, 1) for n, m in res.items()}, cost_mb=52)
@@ -242,13 +338,13 @@ def main():
             return
         best = max(live, key=live.get)
         if live[best] >= max(mbps * BETTER_RATIO, 5.0) and best != effective:
-            api(sock, "PUT", "/proxies/PROXY", {"name": best})
+            select(sock, best)
             log(f"换钉:PROXY → {short(best)} ({live[best]:.1f}Mbps)")
             event("repin", prev=short(effective), to=short(best),
                   mbps=round(live[best], 1),
                   sweep={short(n): round(m, 1) for n, m in res.items()}, cost_mb=52)
         else:
-            api(sock, "PUT", "/proxies/PROXY", {"name": effective})
+            select(sock, effective)
             log("无更优节点,维持现钉节点")
             event("keep_pin", pinned=short(effective), mbps=round(mbps, 1),
                   sweep={short(n): round(m, 1) for n, m in res.items()}, cost_mb=52)
@@ -273,10 +369,10 @@ def main():
         event("all_dead", prev=short(effective), cost_mb=52)
         save_state({"good_streak": 0})
         return
-    auto_pick = proxies.get("AUTO", {}).get("now", "")
+    auto_pick = api(sock, "GET", "/proxies/AUTO").get("now", "")
     auto_mbps = live.get(auto_pick, 0.0)
     if auto_mbps >= GOOD_MBPS:
-        api(sock, "PUT", "/proxies/PROXY", {"name": "AUTO"})
+        select(sock, "AUTO")
         log(f"拥堵消退:AUTO 延迟选优的 {short(auto_pick)} 也有 "
             f"{auto_mbps:.1f}Mbps,PROXY 已交还 AUTO(全自动恢复)")
         event("handoff", pinned=short(effective), auto_pick=short(auto_pick),
@@ -284,7 +380,9 @@ def main():
               sweep={short(n): round(m, 1) for n, m in res.items()}, cost_mb=52)
     else:
         best = max(live, key=live.get)
-        api(sock, "PUT", "/proxies/PROXY", {"name": best})
+        if best != effective and live[best] < mbps * BETTER_RATIO:
+            best = effective
+        select(sock, best)
         log(f"拥堵仍在(AUTO 选中的 {short(auto_pick)} 仅 {auto_mbps:.1f}Mbps),"
             f"继续钉 {short(best)} ({live[best]:.1f}Mbps)")
         event("still_congested", prev=short(effective), to=short(best),
@@ -296,6 +394,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except BudgetExceeded as e:
+        log(str(e))
+        event("budget_exhausted", message=str(e))
     except Exception as e:
         log(f"异常: {e}")
         event("error", error=str(e), cost_mb=0)
