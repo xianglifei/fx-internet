@@ -91,12 +91,16 @@ def main():
     if os.path.exists(runtime):
         with open(runtime) as f:
             if f.read() == content:
+                if (os.stat(runtime).st_mode & 0o777) != 0o600:
+                    os.chmod(runtime, 0o600)
+                    print("runtime.yaml 权限已收紧为 0600(内含订阅 URL)")
                 print(f"runtime.yaml 内容无变化,跳过(端口 {args.port})")
                 return
 
     tmp = runtime + ".tmp"
     with open(tmp, "w") as f:
         f.write(content)
+    os.chmod(tmp, 0o600)  # 订阅 URL = 节点密码,与 subscription.txt 同级保护
 
     r = subprocess.run([args.mihomo, "-t", "-d", state_dir, "-f", tmp],
                        capture_output=True, text=True, timeout=30)

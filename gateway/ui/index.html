@@ -171,9 +171,20 @@
     handoff: function(e){ return "拥堵消退,已自动交还常规模式("+e.auto_pick+" "+e.auto_mbps+" Mbps)"; },
     still_congested: function(e){ return "拥堵仍在,继续钉 "+e.to+"("+e.mbps+" Mbps)"; },
     all_dead: function(e){ return "所有节点都不可用 —— 通常是订阅过期或流量用尽"; },
-    skip: function(e){ return "内核未运行,巡检静默跳过"; },
+    skip: function(e){
+      return e.reason === "kernel_down" ? "内核未运行,巡检静默跳过"
+           : e.reason === "already_running" ? "已有巡检在运行,本次跳过"
+           : "巡检跳过:" + (e.reason || "未知原因");
+    },
     error: function(e){ return "巡检异常:"+e.error; }
   };
+
+  // 订阅源节点名会流入 innerHTML,一律转义(面板与桥同源,注入=遥控网关)
+  function esc(s){
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+      return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c];
+    });
+  }
 
   var HEAD = {
     green:  ["一切正常", null],
@@ -218,13 +229,13 @@
     $("win").classList.toggle("compact", d.level === "green");
 
     if(d.reason === "kernel_down"){
-      $("l1-exit").innerHTML = "内核未在运行 · 上次出口 " + (g.proxy_now_short || "—");
+      $("l1-exit").innerHTML = "内核未在运行 · 上次出口 " + esc(g.proxy_now_short || "—");
       $("l1-alive").textContent = "巡检每小时静默跳过,启动后自动恢复接管";
       var nb = document.getElementById("open-btn");
     } else {
       var mbps = (t.mbps > 0.05 ? t.mbps.toFixed(1) : (sweep && sweep[g.proxy_now_short] ? sweep[g.proxy_now_short].toFixed(1) : "—"));
       var mode = g.pinned ? "已自动切换到最快节点" : "常规模式自动选优中";
-      $("l1-exit").innerHTML = "当前出口 <b>" + (g.proxy_now_short || "—") + "</b> · <b class='num'>" + mbps + "</b> Mbps";
+      $("l1-exit").innerHTML = "当前出口 <b>" + esc(g.proxy_now_short || "—") + "</b> · <b class='num'>" + esc(mbps) + "</b> Mbps";
       $("l1-alive").textContent = "上次巡检 " + (rel(p.last_event && p.last_event.ts) || "—") + " · 系统自主运行中";
     }
     var noteEl = $("l1-note");
@@ -256,9 +267,9 @@
         else if(n === g.auto_now_short) tag = "常规模式待命";
         var cls = v <= 0 ? "bad" : (n === g.proxy_now_short ? "warn" : "");
         html += '<div class="node'+(v<=0?' dead':'')+'">'
-          + '<span class="name">'+n+'</span>'
+          + '<span class="name">'+esc(n)+'</span>'
           + '<div class="nbar"><div class="nfill '+cls+'" style="width:'+Math.max(v/maxv*100,1.5)+'%"></div></div>'
-          + '<span class="mbps num">'+v.toFixed(1)+'</span>'
+          + '<span class="mbps num">'+esc(v.toFixed(1))+'</span>'
           + '<span class="tag">'+tag+'</span></div>';
       });
       $("nodes").innerHTML = html;
@@ -271,16 +282,16 @@
       var tl = "";
       p.events.slice(-8).reverse().forEach(function(e){
         var f = SENTENCES[e.type];
-        tl += '<li><span class="t num">'+(e.ts||"").slice(5,16)+'</span><span>'+(f?f(e):e.type)+'</span></li>';
+        tl += '<li><span class="t num">'+esc((e.ts||"").slice(5,16))+'</span><span>'+esc(f?f(e):e.type)+'</span></li>';
       });
       $("tl").innerHTML = tl;
     }
 
     // 配额 + 环境
     var pct = Math.min(100, Math.round(p.cost_today_mb / p.quota_mb * 100));
-    $("quota").innerHTML = "今日探测 " + p.cost_today_mb + " / " + p.quota_mb + " MB"
+    $("quota").innerHTML = "今日探测 " + esc(p.cost_today_mb) + " / " + esc(p.quota_mb) + " MB"
       + '<span class="qbar"><i style="width:'+pct+'%"></i></span>'
-      + " · 下次巡检 " + p.next_run + " · 代理端口 " + s.kernel.port
+      + " · 下次巡检 " + esc(p.next_run) + " · 代理端口 " + esc(s.kernel.port)
       + (s.sysproxy.apply_mode === "trial-dry" ? " · 试运行(不动系统代理)" : "");
     postSize();
   }
@@ -291,6 +302,10 @@
         $("st-text").textContent = "桥接服务未响应";
         $("st").className = "state red"; $("lamp").className = "lamp red";
       });
+  }
+
+  // provider 节点列表只在订阅更新(30min)时变化,降频到 60s 拉一次
+  function pollProviders(){
     fetch("/api/mihomo/providers/proxies/JMS").then(function(r){ return r.json(); })
       .then(function(d){ nodes = (d.proxies || []).map(function(p){ return (p.name||"").split("@").pop(); }); })
       .catch(function(){});
@@ -315,7 +330,9 @@
   $("a-restart").addEventListener("click", function(){ act("kernel-restart", this); });
 
   poll();
+  pollProviders();
   setInterval(poll, 2000);
+  setInterval(pollProviders, 60000);
 })();
 </script>
 </body>

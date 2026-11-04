@@ -28,6 +28,10 @@
         <string>__PLOG__</string>
         <key>FX_PATROL_PROXY</key>
         <string>__PPROXY__</string>
+        <key>FX_QUOTA_MB</key>
+        <string>__QUOTA__</string>
+        <key>FX_PATROL_MINUTE</key>
+        <string>__PATROL_MINUTE__</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>

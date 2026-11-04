@@ -12,8 +12,7 @@ say(){ printf '\033[1;36m[cutover]\033[0m %s\n' "$*"; }
 STAGE="pre"  # pre: 失败不动现状;live: 已动 Verge,失败必须回滚
 die(){
   printf '\033[1;31m[cutover 失败]\033[0m %s\n' "$*" >&2
-  if [[ "$STAGE" == "live" ]]; then rollback; fi
-  exit 1
+  exit 1  # live 阶段的回滚由下方 ERR trap 统一执行,勿在此重复调用
 }
 trap '[[ "$STAGE" == "live" ]] && rollback || true' ERR
 
@@ -21,10 +20,15 @@ rollback(){
   printf '\033[1;31m[cutover 回滚]\033[0m 恢复 Verge 为唯一代理\n' >&2
   launchctl bootout "gui/$UID_N/local.mihomo" 2>/dev/null || true
   launchctl bootout "gui/$UID_N/local.fx-bridge" 2>/dev/null || true
+  # 巡检撤掉实例指向并重启加载,交还 Verge(与 teardown --full 一致,否则回退后巡检永久静默跳过)
+  /usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:PATROL_SOCKET_HINT" \
+    "$LA/local.verge.node-patrol.plist" 2>/dev/null || true
+  launchctl bootout "gui/$UID_N/local.verge.node-patrol" 2>/dev/null || true
+  sleep 1
+  launchctl bootstrap "gui/$UID_N" "$LA/local.verge.node-patrol.plist" 2>/dev/null || true
   open -a "Clash Verge" || true
   say "已回滚:Verge 重新接管(系统代理 30 秒内由 Verge 守护恢复)"
 }
-trap 'rollback' ERR
 
 # ---- 0. 预检(全部通过才继续) ----
 say "预检…"

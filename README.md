@@ -41,6 +41,7 @@ Mac 家庭网络的**智能代理网关自动化方案**:把不可编程的商�
 | `docs/runbook.md` | Verge 时代迁移手册(切换完成后仅作历史参考) |
 | `docs/design.md` | 需求、设计决策与踩坑记录 |
 | `docs/operations.md` | 日常运维速查(API、日志解读、常见操作) |
+| `docs/optimization-report-2026-11-01.md` | 优化审查报告与修复批次记录 |
 | `ui/proposals/` | 界面设计评审稿(HTML) |
 
 ## 当前状态:fx-gateway 已切换为生产栈(2026-10-25 起)
@@ -59,15 +60,12 @@ Mac 家庭网络的**智能代理网关自动化方案**:把不可编程的商�
 
 ## 本机(felix MacBook Air)部署状态
 
-仓库是 source of truth,**线上副本**在以下位置(改仓库后需同步部署):
-
-| 仓库文件 | 线上路径 |
-|---|---|
-| `patrol/verge-node-patrol.py` | `~/.local/bin/verge-node-patrol.py` |
-| `patrol/launchd.plist.template` | `~/Library/LaunchAgents/local.verge.node-patrol.plist`(已实例化) |
-| `clash/profile.yaml.template` | `~/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev/profiles/jms.yaml`(已注入订阅) |
-
-运行时数据:巡检日志 `~/Library/Logs/verge-node-patrol.log`,状态 `~/Library/Application Support/verge-node-patrol/state.json`。
+仓库是 source of truth,**线上副本**完整对照见 `docs/runbook-gateway.md` 的「仓库 → 线上」表
+(fx-bridge / UI / plist / 巡检脚本 / runtime.yaml 的生成关系都在那里,改仓库后需同步部署)。
+运行时数据:巡检日志 `~/Library/Logs/verge-node-patrol.log`,状态与事件在
+`~/Library/Application Support/verge-node-patrol/`,网关配置与日志在
+`~/Library/Application Support/fx-internet/`。
+Verge 时代本节的 profiles/jms.yaml 对照表已随切换作废(2026-10-25)。
 
 ## 设计原则
 
@@ -80,6 +78,10 @@ Mac 家庭网络的**智能代理网关自动化方案**:把不可编程的商�
 
 - 巡检决策通知推送(macOS 通知 / 飞书)
 - 巡检数据持久化,输出节点质量趋势报表
-- 多订阅/多 provider 支持(当前巡检按节点名含 `JMS` 过滤)
-- Verge 内核异常时自动拉起(当前仅巡检侧静默跳过)
+- 多订阅/多 provider 支持(巡检过滤已参数化 `PATROL_NODE_FILTER`,默认 `JMS`)
 - 按域名/应用维度的分流策略增强
+- 面板随 popover 开合降频轮询(当前常驻 2s,桥侧已有缓存,收益已不大)
+
+已完成的优化审查与修复批次见 `docs/optimization-report-2026-11-01.md`(2026-11-01 实施:
+真实速率差分、请求路径零子进程、Host 校验、flock 巡检锁、面板转义、runtime.yaml 0600、
+cutover 回滚补全、events 有界化)。

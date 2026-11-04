@@ -15,6 +15,8 @@ UID_N=$(id -u)
 
 PORT=7898; SYSAPPLY=0
 if [[ "${1:-}" == "--prod" ]]; then PORT=7897; SYSAPPLY=1; fi
+QUOTA="${FX_QUOTA_MB:-250}"            # 每日探测流量配额(桥展示口径)
+PATROL_MINUTE="${FX_PATROL_MINUTE:-10}"  # 巡检调度分钟,需与 patrol plist 保持一致
 
 say() { printf '\033[1;32m[setup]\033[0m %s\n' "$*"; }
 
@@ -72,6 +74,7 @@ if [[ -f "$REPO/gateway/fx-bridge.py" ]]; then
     fi
     sed -e "s|__HOME__|$HOME_DIR|g" -e "s|__MIXED_PORT__|$PORT|g" -e "s|__SYSAPPLY__|$SYSAPPLY|g" \
         -e "s|__EVENTS__|$EVENTS|g" -e "s|__PSTATE__|$PSTATE|g" -e "s|__PLOG__|$PLOG|g" -e "s|__PPROXY__|$PPROXY|g" \
+        -e "s|__QUOTA__|$QUOTA|g" -e "s|__PATROL_MINUTE__|$PATROL_MINUTE|g" \
         "$REPO/gateway/fx-bridge.plist.template" > "$LAUNCH_AGENTS/local.fx-bridge.plist"
     load_service local.fx-bridge "$LAUNCH_AGENTS/local.fx-bridge.plist"
     say "local.fx-bridge 已加载(端口 7900,sysapply=$SYSAPPLY)"

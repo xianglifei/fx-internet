@@ -1,7 +1,10 @@
 #!/bin/bash
 # fx-gateway 冒烟测试:API、动作、界面(含一级窗口等尺寸断言)
+# 生产机上跑可加 FX_SKIP_RESTART=1(跳过内核重启项,避免瞬断);FX_QUOTA_MB 需与桥一致
 set -euo pipefail
 PORT="${FX_BRIDGE_PORT:-7900}"
+QUOTA="${FX_QUOTA_MB:-250}"
+SKIP_RESTART="${FX_SKIP_RESTART:-0}"
 PASS=0; FAIL=0
 ok(){ printf '  ✓ %s\n' "$1"; PASS=$((PASS+1)); }
 bad(){ printf '  ✗ %s\n' "$1"; FAIL=$((FAIL+1)); }
@@ -15,25 +18,54 @@ assert d['kernel']['running'], 'kernel not running'
 assert d['derived']['level'] in ('green','yellow','red')
 assert d['groups']['proxy_now_short'], 'no exit node'
 assert len(d['patrol']['events']) >= 1, 'no patrol events'
-assert d['patrol']['quota_mb'] == 250
-" && ok "/api/status 结构完整" || bad "/api/status"
+assert d['patrol']['quota_mb'] == int('''$QUOTA'''), 'quota mismatch: ' + str(d['patrol']['quota_mb'])
+" && ok "/api/status 结构完整(配额 $QUOTA)" || bad "/api/status"
 
 L=$(curl -s "http://127.0.0.1:$PORT/api/status" | python3 -c "import json,sys;print(json.load(sys.stdin)['derived']['level'])")
 ok "三态推导: $L"
 
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: evil.example" "http://127.0.0.1:$PORT/api/status")
+[[ "$CODE" == "403" ]] && ok "Host 校验:伪 Host 被拒(403)" || bad "Host 校验(得 $CODE,应为 403)"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$PORT/api/status")
+[[ "$CODE" == "200" ]] && ok "Host 校验:本机回环放行" || bad "本机回环被误拒($CODE)"
+
 curl -sf "http://127.0.0.1:$PORT/api/mihomo/version" | grep -q '"version"' && ok "mihomo API 代理" || bad "mihomo API 代理"
 curl -sf "http://127.0.0.1:$PORT/" | grep -q 'fx-internet' && ok "UI 页面服务" || bad "UI 页面服务"
 
+echo "== 1.5 速率语义(面板速率 ≈ 全局计数差分实测) =="
+S1=$(curl -sf "http://127.0.0.1:$PORT/api/status")
+T1=$(curl -sf "http://127.0.0.1:$PORT/api/mihomo/connections" | python3 -c "
+import json,sys; d=json.load(sys.stdin); print(d.get('downloadTotal',0)+d.get('uploadTotal',0))")
+sleep 4
+S2=$(curl -sf "http://127.0.0.1:$PORT/api/status")
+T2=$(curl -sf "http://127.0.0.1:$PORT/api/mihomo/connections" | python3 -c "
+import json,sys; d=json.load(sys.stdin); print(d.get('downloadTotal',0)+d.get('uploadTotal',0))")
+python3 -c "
+import json
+s1 = json.loads('''$S1''')['traffic']['mbps']; s2 = json.loads('''$S2''')['traffic']['mbps']
+true_rate = max(0.0, float($T2) - float($T1)) * 8 / 4.0 / 1e6
+shown = (s1 + s2) / 2.0
+tol = max(8.0, true_rate * 0.5 + 2.0)
+good = abs(shown - true_rate) <= tol
+mark = 'OK' if good else 'FAIL'
+print('  · 面板 %.1f Mbps vs 实测 %.1f Mbps(容差 %.1f)→ %s' % (shown, true_rate, tol, mark))
+raise SystemExit(0 if good else 1)
+" && ok "速率语义:面板是真实速率,不是连接累计字节" || bad "速率语义(疑似累计值回归)"
+
 echo "== 2. 动作 =="
 curl -sf -X POST "http://127.0.0.1:$PORT/api/actions/handoff-auto" | grep -q '"ok": true' && ok "交还常规模式" || bad "交还常规模式"
-curl -sf -X POST "http://127.0.0.1:$PORT/api/actions/kernel-restart" | grep -q '"ok": true' && ok "内核重启(KeepAlive 拉起)" || bad "内核重启"
-sleep 3
-curl -sf "http://127.0.0.1:$PORT/api/status" | python3 -c "
+if [[ "$SKIP_RESTART" == "1" ]]; then
+  ok "内核重启项跳过(FX_SKIP_RESTART=1,生产保护;PROXY 现值不变)"
+else
+  curl -sf -X POST "http://127.0.0.1:$PORT/api/actions/kernel-restart" | grep -q '"ok": true' && ok "内核重启(KeepAlive 拉起)" || bad "内核重启"
+  sleep 3
+  curl -sf "http://127.0.0.1:$PORT/api/status" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 assert d['kernel']['running'], 'kernel did not come back after restart'
 assert d['groups']['proxy_now'] == 'AUTO', 'handoff did not stick: ' + d['groups']['proxy_now']
 " && ok "重启后恢复 + 交还生效(PROXY=AUTO)" || bad "重启后状态"
+fi
 
 echo "== 3. 界面(playwright 实测,统一紧凑 400 宽:绿=150 高,黄/红=210 高) =="
 cat > /tmp/fx-selftest-ui.cjs << 'EOF'

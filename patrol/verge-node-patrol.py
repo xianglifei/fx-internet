@@ -10,8 +10,13 @@
 
 流量开销:平稳日 ~4MB/小时 + 少量全量扫描(6节点×8MB),约 150-250MB/天。
 由 ~/Library/LaunchAgents/local.verge.node-patrol.plist 每小时 :10 触发。
+
+并发与边界:
+- PATROL_LOCK(flock 非阻塞)防并发,桥触发与 launchd 调度共用;拿不到锁=已有实例在跑
+- events.jsonl 有界:超 256KB 自动截留最近 500 行
+- 可调环境变量:PATROL_NODE_FILTER(节点名过滤,默认 "JMS")
 """
-import subprocess, json, re, os, datetime
+import subprocess, json, re, os, datetime, fcntl
 
 MIXED_PROXY = os.environ.get("PATROL_PROXY", "http://127.0.0.1:7897")
 PROBE_BYTES = 4_000_000         # 平稳态轻探测流量
@@ -32,13 +37,20 @@ EVENTS_PATH = os.environ.get(
         "~/Library/Application Support/verge-node-patrol/events.jsonl"))
 # 双 mihomo 实例并行时(如 fx-gateway 试运行期),用它指定本巡检该管哪个 socket(按路径子串匹配)
 SOCKET_HINT = os.environ.get("PATROL_SOCKET_HINT", "")
+# 并发防护锁(与 fx-bridge 的 patrol-now 探测共用同一文件;flock 持有期即锁期,孤儿文件无害)
+PATROL_LOCK = os.environ.get(
+    "PATROL_LOCK",
+    os.path.expanduser(
+        "~/Library/Application Support/fx-internet/patrol.lock"))
+NODE_FILTER = os.environ.get("PATROL_NODE_FILTER", "JMS")
 
 def log(msg):
     with open(LOG_PATH, "a") as f:
         f.write(f"[{datetime.datetime.now():%Y-%m-%d %H:%M:%S}] {msg}\n")
 
 def event(etype, **data):
-    """结构化事件(JSONL),供 fx-bridge 聚合展示;与人类日志并行,写失败不影响巡检"""
+    """结构化事件(JSONL),供 fx-bridge 聚合展示;与人类日志并行,写失败不影响巡检。
+    有界增长:文件超 256KB 时原子截留最近 500 行。"""
     rec = {"ts": datetime.datetime.now().isoformat(timespec="seconds"),
            "type": etype}
     rec.update(data)
@@ -46,6 +58,13 @@ def event(etype, **data):
         os.makedirs(os.path.dirname(EVENTS_PATH), exist_ok=True)
         with open(EVENTS_PATH, "a") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        if os.path.getsize(EVENTS_PATH) > 262144:
+            with open(EVENTS_PATH) as f:
+                keep = f.read().splitlines()[-500:]
+            tmp = EVENTS_PATH + ".tmp"
+            with open(tmp, "w") as f:
+                f.write("\n".join(keep) + "\n")
+            os.replace(tmp, EVENTS_PATH)
     except Exception:
         pass
 
@@ -58,8 +77,24 @@ def load_state():
 
 def save_state(st):
     os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
-    with open(STATE_PATH, "w") as f:
+    tmp = STATE_PATH + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(st, f)
+    os.replace(tmp, STATE_PATH)
+
+def acquire_lock():
+    """非阻塞 flock;成功返回持有的文件对象(进程退出自动释放),失败返回 None"""
+    try:
+        os.makedirs(os.path.dirname(PATROL_LOCK), exist_ok=True)
+        f = open(PATROL_LOCK, "w")
+    except OSError:
+        return None
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f
 
 def find_socket():
     ps = subprocess.run(["ps", "aux"], capture_output=True, text=True).stdout
@@ -121,15 +156,20 @@ def sweep(sock, nodes):
     return results
 
 def main():
+    lock = acquire_lock()
+    if lock is None:
+        log("已有巡检在运行(桥触发/launchd 并发),本次静默退出")
+        event("skip", reason="already_running", cost_mb=0)
+        return
     sock = find_socket()
     if not sock:
         log("Verge 内核未运行,跳过")
         event("skip", reason="kernel_down", cost_mb=0)
         return
     proxies = api(sock, "GET", "/proxies").get("proxies", {})
-    nodes = [n for n in proxies.get("PROXY", {}).get("all", []) if "JMS" in n]
+    nodes = [n for n in proxies.get("PROXY", {}).get("all", []) if NODE_FILTER in n]
     if not nodes:
-        log("未找到 JMS 节点(provider 异常?),跳过")
+        log(f"未找到 {NODE_FILTER} 节点(provider 异常?),跳过")
         event("skip", reason="no_nodes", cost_mb=0)
         return
 

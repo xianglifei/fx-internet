@@ -9,10 +9,17 @@
 - 动作(POST /api/actions/...):立即巡检、内核启停、交还常规模式、应用配置
 - 系统代理守护线程(30s):FX_SYSAPPLY=1 时写入 networksetup;=0 时仅监测(试运行期)
 
+性能与安全约定:
+- /proxies 与 /connections 由监测线程统一缓存,/api/status 纯读内存,请求路径零子进程
+- 实时速率为 2s 差分(mihomo downloadTotal/uploadTotal),不是连接累计字节
+- 仅接受 Host: 127.0.0.1:PORT / localhost:PORT(DNS rebinding / 恶意页面 POST 防护)
+- 巡检并发由 patrol 侧 flock 统一防护;桥只做非阻塞探测
+
 设计原则:桥不是内核的父进程(内核由 launchd 直管),桥挂了网络照常;
 所有写操作遵守"先清系统代理,再停内核"的顺序。
 """
 import datetime
+import fcntl
 import json
 import os
 import re
@@ -43,6 +50,7 @@ UID_N = str(os.getuid())
 EVENTS_PATH = env("FX_EVENTS_PATH", os.path.join(
     HOME, "Library/Application Support/verge-node-patrol/events.jsonl"))
 PATROL_SCRIPT = os.path.join(HOME, ".local/bin/verge-node-patrol.py")
+PATROL_LOCK = os.path.join(STATE_DIR, "patrol.lock")
 PATROL_ENV = {
     "PATROL_SOCKET_HINT": "fx-mihomo.sock",
     "PATROL_PROXY": env("FX_PATROL_PROXY", f"http://127.0.0.1:{MIXED_PORT}"),
@@ -51,16 +59,18 @@ PATROL_ENV = {
     "PATROL_EVENTS": EVENTS_PATH,
     "PATROL_LOG": env("FX_PATROL_LOG", os.path.join(
         HOME, "Library/Logs/verge-node-patrol.log")),
+    "PATROL_LOCK": PATROL_LOCK,
     "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
 }
-PATROL_LOCK = os.path.join(STATE_DIR, "patrol.lock")
-QUOTA_MB = 250
+QUOTA_MB = int(env("FX_QUOTA_MB", "250"))       # 每日探测流量配额(展示口径)
+PATROL_MINUTE = int(env("FX_PATROL_MINUTE", "10"))  # 与巡检 plist 的调度分钟保持一致
 
 # 逐字复刻 Verge 的 bypass 列表(盘点确认)
 BYPASS = ["127.0.0.1", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12",
           "localhost", "*.local", "*.crashlytics.com", "<local>"]
 
-MON = {"kernel": None, "mbps": 0.0, "conns": 0, "ts": 0}     # 2s 监测线程
+# 监测线程 2s 刷新;/proxies 一并缓存,请求路径免子进程
+MON = {"kernel": None, "mbps": 0.0, "conns": 0, "proxies": {}, "ts": 0}
 SYS = {"ok": None, "applied": False, "requires_admin": False,
        "error": None, "ts": 0}                                 # 30s 守护线程
 
@@ -86,20 +96,33 @@ def short(name):
     return name.split("@")[-1] if "@" in name else name
 
 
-# ---------- 监测线程:内核存活 + 实时速率(2s) ----------
+# ---------- 监测线程:内核存活 + 实时速率 + /proxies 缓存(2s) ----------
 
 def monitor_loop():
+    prev_total = None   # 上轮全局累计字节(downloadTotal+uploadTotal)
+    prev_ts = None
     while True:
-        ver = mi("GET", "/version", timeout=3)
-        conns = mi("GET", "/connections", timeout=3)
-        mbps, n = 0.0, 0
-        for c in (conns.get("connections") or []):
-            chains = c.get("chains") or []
-            if chains and chains[-1] != "DIRECT":  # 仅统计走代理的流量
-                mbps += (c.get("download", 0) + c.get("upload", 0)) * 8 / 1e6
-                n += 1
-        MON.update(kernel=ver.get("version"), mbps=round(mbps, 1),
-                   conns=n, ts=time.time())
+        try:
+            ver = mi("GET", "/version", timeout=3)
+            conns = mi("GET", "/connections", timeout=3)
+            proxies = mi("GET", "/proxies", timeout=5)
+            n = 0
+            for c in (conns.get("connections") or []):
+                chains = c.get("chains") or []
+                if chains and chains[-1] != "DIRECT":  # 仅统计走代理的连接数
+                    n += 1
+            # 速率 = 全局累计字节的 2s 差分(内核重启计数清零时钳到 0);
+            # 全局计数器不受连接建立/关闭影响,连接级累计字节会漏短连接且被误当速率
+            total = conns.get("downloadTotal", 0) + conns.get("uploadTotal", 0)
+            mbps = 0.0
+            now = time.time()
+            if prev_total is not None and prev_ts and now > prev_ts:
+                mbps = max(0.0, (total - prev_total) * 8 / (now - prev_ts) / 1e6)
+            prev_total, prev_ts = total, now
+            MON.update(kernel=ver.get("version"), mbps=round(mbps, 1),
+                       conns=n, proxies=proxies.get("proxies", {}), ts=now)
+        except Exception as e:
+            log(f"监测线程异常(下拍重试): {e}")
         time.sleep(2)
 
 
@@ -174,6 +197,11 @@ def apply_proxy_to_service(svc, enable):
 def guard_loop():
     while True:
         try:
+            # 启动等待:监测线程首拍未落地(MON.ts==0)前不做任何判断,
+            # 否则会把"尚未测量"误判为"内核不在"而清掉系统代理(重启后断流 ≤30s 的竞态)
+            if not MON.get("ts"):
+                time.sleep(1)
+                continue
             cur = read_sysproxy()
             kernel_up = bool(MON.get("kernel"))
             if SYSAPPLY and kernel_up:
@@ -211,24 +239,37 @@ def guard_loop():
 # ---------- 巡检事件 ----------
 
 def read_events(n=80):
+    """只读文件尾部(64KB),事件文件长期增长时请求路径不随之变慢"""
     try:
-        with open(EVENTS_PATH) as f:
-            lines = [l for l in f.read().splitlines() if l.strip()]
-        return [json.loads(l) for l in lines[-n:]]
-    except Exception:
+        size = os.path.getsize(EVENTS_PATH)
+        with open(EVENTS_PATH, "rb") as f:
+            if size > 65536:
+                f.seek(-65536, os.SEEK_END)
+            data = f.read().decode("utf-8", "replace")
+        lines = [l for l in data.splitlines() if l.strip()]
+        if size > 65536 and lines:
+            lines = lines[1:]  # 尾读首行可能被截断,丢弃
+        out = []
+        for l in lines[-n:]:
+            try:
+                out.append(json.loads(l))
+            except ValueError:
+                pass
+        return out
+    except OSError:
         return []
 
 
 def next_patrol_time():
     now = datetime.datetime.now()
-    nxt = now.replace(minute=10, second=0, microsecond=0)
-    if now.minute >= 10:
+    nxt = now.replace(minute=PATROL_MINUTE, second=0, microsecond=0)
+    if now.minute >= PATROL_MINUTE:
         nxt += datetime.timedelta(hours=1)
     return f"{nxt:%H:%M}"
 
 
 def build_status():
-    proxies = mi("GET", "/proxies").get("proxies", {})
+    proxies = MON.get("proxies") or {}
     proxy_now = proxies.get("PROXY", {}).get("now", "")
     auto_now = proxies.get("AUTO", {}).get("now", "")
     pinned = bool(proxy_now) and proxy_now != "AUTO"
@@ -280,18 +321,26 @@ def launchctl(*args):
 
 
 def run_patrol():
-    if os.path.exists(PATROL_LOCK):
-        return False, "巡检已在运行中"
+    """触发巡检。并发防护统一由 patrol 侧 flock 负责(桥触发与 launchd 调度共用一把锁);
+    这里先非阻塞探测一次,避免明知在跑还拉起一个注定退出的进程。
+    探测到即让位(flock 随 fd 关闭释放),孤儿锁文件无害——flock 只在持有期间存在。"""
     try:
-        os.close(os.open(PATROL_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-    except FileExistsError:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        fd = os.open(PATROL_LOCK, os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError:
+        return False, "无法打开巡检锁"
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
         return False, "巡检已在运行中"
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
     e = dict(os.environ)
     e.update(PATROL_ENV)
     subprocess.Popen([e.get("PATROL_PYTHON", "/opt/homebrew/bin/python3"),
                       PATROL_SCRIPT], env=e,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    threading.Timer(600, lambda: os.path.exists(PATROL_LOCK) and os.remove(PATROL_LOCK)).start()
     return True, "已触发"
 
 
@@ -329,7 +378,16 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _host_ok(self):
+        """DNS rebinding / 恶意页面 POST 防护:Host 必须是本机回环地址。
+        浏览器对 127.0.0.1 的跨源 POST 是 simple request 不受 CORS 拦截,
+        攻击页还可把自有域名解析到 127.0.0.1,故必须校验 Host。"""
+        host = (self.headers.get("Host") or "").strip().lower()
+        return host in (f"127.0.0.1:{BRIDGE_PORT}", f"localhost:{BRIDGE_PORT}")
+
     def do_GET(self):
+        if not self._host_ok():
+            return self._json({"error": "bad host"}, 403)
         if self.path in ("/", "/index.html"):
             try:
                 with open(UI_FILE) as f:
@@ -352,15 +410,26 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
     def do_PUT(self):
+        if not self._host_ok():
+            return self._json({"error": "bad host"}, 403)
         if self.path.startswith("/api/mihomo/"):
             path = self.path[len("/api/mihomo"):]
-            length = int(self.headers.get("Content-Length") or 0)
-            data = json.loads(self.rfile.read(length) or b"{}") if length else None
+            try:
+                length = min(int(self.headers.get("Content-Length") or 0), 65536)
+            except ValueError:
+                length = 0
+            try:
+                raw = self.rfile.read(length) if length > 0 else b""
+                data = json.loads(raw) if raw.strip() else None
+            except (ValueError, OSError):
+                return self._json({"error": "bad json"}, 400)
             self._json(mi("PUT", path, data))
         else:
             self._json({"error": "not found"}, 404)
 
     def do_POST(self):
+        if not self._host_ok():
+            return self._json({"error": "bad host"}, 403)
         if self.path.startswith("/api/actions/"):
             name = self.path.rsplit("/", 1)[-1]
             if name == "kernel-stop":

@@ -94,6 +94,24 @@ gateway/teardown.sh --full   # 切换后反悔:停自研栈,巡检改回,重开 
 - **mihomo 升级**:换 `~/.local/bin/mihomo` 二进制后 `kernel-restart`;版本回退同理。
 - **geo 数据**:内核目录内独立副本,与 Verge 无关;更新即替换文件 + 重启。
 
+## 运行时边界(2026-11-01 优化批次起)
+
+- **巡检并发锁**:`…/fx-internet/patrol.lock` 是 flock 锁(桥的 patrol-now 探测与
+  launchd 定时巡检共用),拿不到锁=已有实例在跑;**孤儿锁文件无害**(flock 随进程退出自动释放)。
+- **事件文件有界**:`events.jsonl` 超 256KB 自动截留最近 500 行;桥读状态只取尾部 64KB,
+  长期运行不会变慢。
+- **请求路径零子进程**:`/api/status` 全部读监测线程缓存(2s 刷新);mihomo 卡顿时不再堆积 curl。
+- **速率口径**:面板"Mbps"为全局计数 2s 差分(经网关的总流量,含直连),非连接累计字节。
+- **Host 校验**:桥只接受 `Host: 127.0.0.1:7900 / localhost:7900`,其余 403(DNS rebinding 防护)。
+- **环境变量**(plist 已实例化,改默认值需重跑 setup 或手改 plist):
+
+| 变量 | 默认 | 含义 |
+|---|---|---|
+| `FX_QUOTA_MB` | 250 | 每日探测流量配额(展示口径,面板进度条) |
+| `FX_PATROL_MINUTE` | 10 | 巡检调度分钟(需与 patrol plist 的 :10 一致) |
+| `PATROL_NODE_FILTER` | JMS | 巡检节点名过滤子串(换服务商时改) |
+| `FX_SKIP_RESTART` | 0 | selftest 跳过内核重启项(生产机跑冒烟时设 1) |
+
 ## 与旧文档的关系
 
 `docs/operations.md` 的巡检日志解读、故障排查路径仍然适用;端口/入口相关的命令以本手册为准。
