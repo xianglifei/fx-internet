@@ -9,6 +9,15 @@
         <string>__PYTHON__</string>
         <string>__HOME__/.local/bin/verge-node-patrol.py</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATROL_SOCKET_HINT</key>
+        <string>__SOCKET_HINT__</string>
+        <key>PATROL_NODE_FILTER</key>
+        <string>__NODE_FILTER__</string>
+        <key>PATROL_QUOTA_MB</key>
+        <string>__QUOTA_MB__</string>
+    </dict>
     <key>StartCalendarInterval</key>
     <array>
         <dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>10</integer></dict>

@@ -50,6 +50,17 @@ Mac 家庭网络的**智能代理网关自动化方案**:把不可编程的商�
 每小时巡检**;菜单栏 FxInternetBar(雷达图标)是唯一入口。Verge 已退出且自启已关闭,应用保留作回退。
 断网急恢复看 `docs/emergency-restore.md`;架构与日常操作看 `docs/runbook-gateway.md`。
 
+## 朋友一键安装(非技术用户)
+
+到 [Releases](https://github.com/xianglifei/fx-internet/releases) 下载最新 `FxInternet-安装包-*.zip`:
+
+1. 解压后双击「安装.command」(若 macOS 拦截:系统设置 → 隐私与安全性 → 仍要打开)
+2. 粘贴机场的 Clash/Mihomo 订阅链接,等待"🎉 安装完成"
+3. 菜单栏雷达图标就是控制面板;首次装完可能需按提示装一次 macOS 命令行开发者工具
+
+安装包完全自包含(mihomo 双架构内核 + geo 资产 + universal 菜单栏 App),朋友机器零额外下载;
+卸载双击「卸载.command」。构建发布包:`installer/build-release.sh <版本号>`。
+
 ## 在新 Mac 上部署
 
 把本目录交给那台机器上的 Coding Agent,指令:

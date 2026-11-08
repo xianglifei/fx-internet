@@ -18,6 +18,12 @@ if [[ "${1:-}" == "--prod" ]]; then PORT=7897; SYSAPPLY=1; fi
 QUOTA="${FX_QUOTA_MB:-250}"            # 每日探测流量配额(桥展示口径)
 PATROL_MINUTE="${FX_PATROL_MINUTE:-10}"  # 巡检调度分钟,需与 patrol plist 保持一致
 
+# python3:FX_PYTHON 可指定;否则优先 homebrew(本机),回退系统 CLT(全新机器)
+if [[ -n "${FX_PYTHON:-}" ]]; then PYTHON="$FX_PYTHON"
+elif [[ -x /opt/homebrew/bin/python3 ]]; then PYTHON=/opt/homebrew/bin/python3
+elif [[ -x /usr/local/bin/python3 ]]; then PYTHON=/usr/local/bin/python3
+else PYTHON=$(command -v python3); fi
+
 say() { printf '\033[1;32m[setup]\033[0m %s\n' "$*"; }
 
 # (重)加载 launchd 服务;bootout 后立刻 bootstrap 偶发 I/O error 5,补一次重试
@@ -39,9 +45,11 @@ if [[ ! -x "$BIN_DIR/mihomo" ]]; then
     say "已复制 mihomo 二进制 → $BIN_DIR/mihomo ($("$BIN_DIR/mihomo" -v 2>/dev/null | head -1))"
 fi
 
-# 2) geo 资产 + provider 缓存种子(首次启动不必等订阅拉取)
+# 2) geo 资产 + provider 缓存种子(首次启动不必等订阅拉取;无 Verge 的全新机器由安装器预置)
 for f in geosite.dat geoip.dat Country.mmdb ASN.mmdb; do
-    [[ -f "$STATE_DIR/$f" ]] || { cp "$VERGE_DIR/$f" "$STATE_DIR/$f"; say "已复制 $f"; }
+    if [[ ! -f "$STATE_DIR/$f" && -f "$VERGE_DIR/$f" ]]; then
+        cp "$VERGE_DIR/$f" "$STATE_DIR/$f"; say "已复制 $f"
+    fi
 done
 if [[ ! -f "$STATE_DIR/providers/jms-sub.yaml" && -f "$VERGE_DIR/providers/jms-sub.yaml" ]]; then
     cp "$VERGE_DIR/providers/jms-sub.yaml" "$STATE_DIR/providers/jms-sub.yaml"
@@ -54,7 +62,7 @@ cp "$REPO/patrol/verge-node-patrol.py" "$BIN_DIR/verge-node-patrol.py"
 say "巡检脚本已同步"
 
 # 4) 生成 runtime.yaml(含 mihomo -t 校验)
-/opt/homebrew/bin/python3 "$REPO/gateway/build-config.py" --port "$PORT" --state-dir "$STATE_DIR"
+"$PYTHON" "$REPO/gateway/build-config.py" --port "$PORT" --state-dir "$STATE_DIR"
 
 # 5) 实例化并安装 launchd
 sed -e "s|__HOME__|$HOME_DIR|g" "$REPO/gateway/mihomo.plist.template" > "$LAUNCH_AGENTS/local.mihomo.plist"
@@ -73,6 +81,7 @@ if [[ -f "$REPO/gateway/fx-bridge.py" ]]; then
         PLOG="$STATE_DIR/trial-patrol.log"; PPROXY="http://127.0.0.1:$PORT"
     fi
     sed -e "s|__HOME__|$HOME_DIR|g" -e "s|__MIXED_PORT__|$PORT|g" -e "s|__SYSAPPLY__|$SYSAPPLY|g" \
+        -e "s|__PYTHON__|$PYTHON|g" \
         -e "s|__EVENTS__|$EVENTS|g" -e "s|__PSTATE__|$PSTATE|g" -e "s|__PLOG__|$PLOG|g" -e "s|__PPROXY__|$PPROXY|g" \
         -e "s|__QUOTA__|$QUOTA|g" -e "s|__PATROL_MINUTE__|$PATROL_MINUTE|g" \
         "$REPO/gateway/fx-bridge.plist.template" > "$LAUNCH_AGENTS/local.fx-bridge.plist"

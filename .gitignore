@@ -5,3 +5,7 @@
 __pycache__/
 *.pyc
 .zcode/
+
+# 发布构建产物与 payload 缓存(release 资产不进仓库)
+dist/
+installer/payload-cache/

@@ -282,7 +282,8 @@ def main():
         event("skip", reason="kernel_down", cost_mb=0)
         return
     proxies = api(sock, "GET", "/proxies").get("proxies", {})
-    nodes = [n for n in proxies.get("PROXY", {}).get("all", []) if NODE_FILTER in n]
+    nodes = [n for n in proxies.get("PROXY", {}).get("all", [])
+             if n != "AUTO" and NODE_FILTER in n]
     if not nodes:
         log(f"未找到 {NODE_FILTER} 节点(provider 异常?),跳过")
         event("skip", reason="no_nodes", cost_mb=0)

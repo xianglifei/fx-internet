@@ -25,6 +25,7 @@ import os
 import re
 import secrets
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -385,7 +386,7 @@ def run_patrol():
     os.close(fd)
     e = dict(os.environ)
     e.update(PATROL_ENV)
-    subprocess.Popen([e.get("PATROL_PYTHON", "/opt/homebrew/bin/python3"),
+    subprocess.Popen([e.get("PATROL_PYTHON", sys.executable),
                       PATROL_SCRIPT], env=e,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return True, "已触发"
