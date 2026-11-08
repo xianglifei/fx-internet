@@ -6,7 +6,8 @@
 - 拥堵态:出口吞吐 < GOOD_MBPS → 全量扫描,PROXY 钉到实测最快节点(≥1.3× 才换)
 - 回归:钉住节点连续 RETURN_AFTER 次达标 → 全量扫描复测,若 AUTO 的延迟选优节点
   也达标(说明拥堵消退、吞吐不再是瓶颈),自动把 PROXY 切回 AUTO
-- 兜底:出口挂了(gstatic 204 失败)→ 立即全量扫描换节点;Verge 没跑 → 静默退出
+- 兜底:出口节点测活失败(mihomo delay API)或 gstatic 无响应 → 立即全量扫描换节点;
+  内核没跑 → 静默退出
 
 流量开销:平稳日 ~4MB/小时 + 少量全量扫描(6节点×8MB),约 150-250MB/天。
 由 ~/Library/LaunchAgents/local.verge.node-patrol.plist 每小时 :10 触发。
@@ -16,7 +17,7 @@
 - events.jsonl 有界:超 256KB 自动截留最近 500 行
 - 可调环境变量:PATROL_NODE_FILTER(节点名过滤,默认 "JMS")
 """
-import subprocess, json, re, os, datetime, fcntl
+import subprocess, json, re, os, datetime, fcntl, urllib.parse
 
 MIXED_PROXY = os.environ.get("PATROL_PROXY", "http://127.0.0.1:7897")
 PROBE_BYTES = 4_000_000         # 平稳态轻探测流量
@@ -149,8 +150,9 @@ def find_socket():
                 if m:
                     return m.group(1).strip()
         return None
-    # 注意:路径可能含空格(如 .../Application Support/...),必须捕获到行尾
-    m = re.search(r"-ext-ctl-unix (.+)$", ps)
+    # 注意:路径可能含空格(如 .../Application Support/...),必须捕获到行尾;
+    # ps 输出多行,需 re.M 让 $ 锚定每行行尾
+    m = re.search(r"-ext-ctl-unix (.+)$", ps, re.M)
     return m.group(1).strip() if m else None
 
 def api(sock, method, path, data=None):
@@ -169,6 +171,29 @@ def api(sock, method, path, data=None):
         return result
     except ValueError as e:
         raise RuntimeError("mihomo API 请求失败") from e
+
+
+def node_alive(sock, name):
+    """对出口节点做链路测活:用 /group/PROXY/delay 并发测全组,看当前出口是否命中。
+    不能用 alive() 代替:alive 的 gstatic 在现网规则下命中 GeoIP(cn)→DIRECT,
+    节点死了它照样返回 204(死节点曾被"保留原出口"悬置 4 小时无人换)。
+    也不能用 /proxies/{name}/delay:provider 叶子节点不在全局 proxies 表里,必 404。
+    返回:True=存活;False=全组有存活者但当前出口不在其中(确死);
+    None=API 失败或全组无结果(存疑,调用方不得据此判死)。"""
+    if not name:
+        return False
+    try:
+        r = api(sock, "GET",
+                "/group/PROXY/delay"
+                f"?url={urllib.parse.quote('https://www.gstatic.com/generate_204', safe='')}"
+                "&timeout=4000")
+    except Exception:
+        return None
+    if not isinstance(r, dict):
+        return None
+    if name in r:
+        return True
+    return False if r else None
 
 
 def select(sock, name):
@@ -218,7 +243,10 @@ def measure(bytes_):
     check_budget(bytes_)
     code, sp = curl_measure(f"https://speed.cloudflare.com/__down?bytes={bytes_}", 14, bytes_)
     if code != "200":
-        raise RuntimeError("测速服务异常或下载不完整，保留原出口")
+        # 测速失败返回失败而不是抛异常:抛异常会被最外层兜底吞掉并以"保留原出口"
+        # 收场,应急换节点分支(下方 if not ok)永远走不到——2026-11-08 死节点悬置
+        # 4 小时的根因。单节点失败在 sweep 里记 0.0 并继续,不影响其余节点。
+        return False, 0.0
     return True, sp * 8 / 1e6
 
 
@@ -268,8 +296,16 @@ def main():
 
     try:
         if not alive():
+            # 本地栈无响应(gstatic 失败):按出口故障兜底
             EMERGENCY = True
             ok, mbps = False, 0.0
+            log("gstatic 无响应,按出口故障处理")
+        elif node_alive(sock, effective) is False:
+            # 节点级测活:当前出口 dial 超时(节点死亡)也必须触发应急扫描。
+            # 返回 None(API 存疑)不触发,交给下方 measure 兜底
+            EMERGENCY = True
+            ok, mbps = False, 0.0
+            log(f"出口节点 {short(effective) or '?'} 全组测活未命中(死亡),立即全量扫描")
         else:
             ok, mbps = measure(PROBE_BYTES)
     except BudgetExceeded as e:
