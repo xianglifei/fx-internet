@@ -84,10 +84,10 @@ cp "$CACHE/geosite.dat" "$CACHE/country.mmdb" "$STAGE/payload/"
 find "$STAGE" -name '__pycache__' -type d -prune -exec rm -rf {} +
 chmod +x "$STAGE/安装.command" "$STAGE/卸载.command" "$STAGE/stack/gateway/setup.sh" "$STAGE/stack/patrol/verge-node-patrol.py"
 
-# ---- 5) 打 zip(zip -X 不产 AppleDouble;保留执行位;UTF-8 文件名) ----
-ZIP="$DIST/FxInternet-安装包-$VERSION.zip"
+# ---- 5) 打 zip(zip 文件名用 ASCII:gh 上传中文资产名会损坏;zip 内顶层目录保持中文名) ----
+ZIP="$DIST/FxInternet-Installer-$VERSION.zip"
 rm -f "$ZIP"
-(cd "$DIST" && COPYFILE_DISABLE=1 zip -q -r -X "FxInternet-安装包-$VERSION.zip" "FxInternet-安装包")
+(cd "$DIST" && COPYFILE_DISABLE=1 zip -q -r -X "FxInternet-Installer-$VERSION.zip" "FxInternet-安装包")
 
 say "包内容核验:"
 unzip -l "$ZIP" | tail -1
