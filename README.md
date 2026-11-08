@@ -52,9 +52,9 @@ Mac 家庭网络的**智能代理网关自动化方案**:把不可编程的商�
 
 ## 朋友一键安装(非技术用户)
 
-到 [Releases](https://github.com/xianglifei/fx-internet/releases) 下载最新 `FxInternet-安装包-*.zip`:
+到 [Releases](https://github.com/xianglifei/fx-internet/releases) 下载最新 `FxInternet-Installer-*.zip`(解压得到「FxInternet-安装包」文件夹):
 
-1. 解压后双击「安装.command」(若 macOS 拦截:系统设置 → 隐私与安全性 → 仍要打开)
+1. 双击「安装.command」(若 macOS 拦截:系统设置 → 隐私与安全性 → 仍要打开)
 2. 粘贴机场的 Clash/Mihomo 订阅链接,等待"🎉 安装完成"
 3. 菜单栏雷达图标就是控制面板;首次装完可能需按提示装一次 macOS 命令行开发者工具
 
