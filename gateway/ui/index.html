@@ -105,6 +105,7 @@
   .st.ok{ color:var(--ok); } .st.ok::before{ background:var(--ok); }
   .st.bad{ color:var(--bad); } .st.bad::before{ background:var(--bad); }
   .nm{ font-weight:500; white-space:nowrap; }
+  .nm .mark{ margin-left:5px; }
   .ms{ color:var(--dim); white-space:nowrap; }
   .mb{ white-space:nowrap; }
   tr.dead .nm,tr.dead .ms,tr.dead .mb{ color:var(--bad); }
@@ -335,15 +336,14 @@
     rows.forEach(function(r){
       var alive = !!r.n.alive;
       var isExit = r.n.short === exitShort;
-      var marks = "";
-      if (isExit) marks += '<span class="mark ' + (alive ? "use" : "down") + '">' + (alive ? "使用中" : "出口异常") + '</span>';
-      else if (fastest === r && exitShort) marks += '<span class="mark fast">最快</span>';
+      var exitMark = isExit ? '<span class="mark ' + (alive ? "use" : "down") + '">' + (alive ? "使用中" : "出口异常") + '</span>' : "";
+      var fastMark = (fastest === r && exitShort) ? '<span class="mark fast">最快</span>' : "";
       html += "<tr class='" + (alive ? "" : "dead ") + (isExit ? "current" : "") + "'>"
         + '<td><span class="st ' + (alive ? "ok" : "bad") + '">' + (alive ? "通" : "断") + '</span></td>'
-        + '<td class="nm" title="' + esc(r.n.short) + '">' + esc(r.label) + '</td>'
+        + '<td class="nm" title="' + esc(r.n.short) + '">' + esc(r.label) + exitMark + '</td>'
         + '<td class="c ms num">' + (alive ? (r.n.delay ? r.n.delay + "ms" : "—") : "超时") + '</td>'
         + '<td class="num">' + (r.sv != null ? '<span class="mb">' + r.sv.toFixed(1) + ' Mbps</span>' : '<span class="ms">—</span>') + '</td>'
-        + '<td class="c">' + marks + '</td></tr>';
+        + '<td class="c">' + fastMark + '</td></tr>';
     });
     body.innerHTML = html;
   }
