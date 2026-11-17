@@ -113,6 +113,7 @@
   .nm .mark{ margin-left:5px; }
   .ms{ color:var(--dim); white-space:nowrap; }
   .mb{ white-space:nowrap; }
+  .ms .mark,.mb .mark{ margin-left:5px; }
   tr.dead .nm,tr.dead .ms,tr.dead .mb{ color:var(--bad); }
   tr.current td{ background:color-mix(in srgb,var(--accent) 6%,transparent); }
   .mark{ font-size:10px; padding:2px 7px; border-radius:99px; white-space:nowrap; }
@@ -171,7 +172,7 @@
 
     <div class="tblwrap">
       <table class="tbl">
-        <thead><tr><th>状态</th><th>节点</th><th class="c">延迟(<span id="th-health-at">—</span>)<span class="tip" data-tip="内核健康检查:每 5 分钟一轮,小请求走节点往返一圈的时间(ms),反映反应速度;通断状态也来自它">ⓘ</span></th><th id="th-measure">实测(<span id="th-sweep-at">—</span>)<span class="tip" data-tip="全量实测:让每个节点下载一个 8MB 测试文件,测出的持续下载速度(Mbps);拥堵/故障时或定时(白天约每 3 小时)触发">ⓘ</span></th><th class="c" id="th-mark">标记</th></tr></thead>
+        <thead><tr><th>状态</th><th>节点</th><th class="c">延迟(<span id="th-health-at">—</span>)<span class="tip" data-tip="内核健康检查:每 5 分钟一轮,小请求走节点往返一圈的时间(ms),反映反应速度;通断状态也来自它">ⓘ</span></th><th>实测(<span id="th-sweep-at">—</span>)<span class="tip" data-tip="全量实测:让每个节点下载一个 8MB 测试文件,测出的持续下载速度(Mbps);拥堵/故障时或定时(白天约每 3 小时)触发">ⓘ</span></th></tr></thead>
         <tbody id="rows"><tr><td colspan="5" class="dim" style="font-size:12px">正在获取节点…</td></tr></tbody>
       </table>
     </div>
@@ -301,12 +302,9 @@
     $("a-handoff").hidden = !(g.pinned && !down && uiMode === "sweep");
     $("a-restart").hidden = !(d.reason === "kernel_down" || d.reason === "status_unknown");
 
-    // ---- 节点总览表(出口=「使用中」标记贴节点名后;按延迟模式下隐藏实测/标记) ----
-    var showMeasure = uiMode !== "delay";
-    $("th-measure").style.display = showMeasure ? "" : "none";
-    $("th-mark").style.display = showMeasure ? "" : "none";
+    // ---- 节点总览表(使用中贴节点名后;最快=延迟最低/实测最高,各标各的列) ----
     document.querySelector(".tbl").classList.toggle("pick", uiMode === "manual");
-    renderTable(g, exitShort, showMeasure);
+    renderTable(g, exitShort);
     var healthAt = null;
     nodes.forEach(function(n){ if (n.at && (!healthAt || n.at > healthAt)) healthAt = n.at; });
     $("th-health-at").textContent = healthAt || "—";
@@ -338,10 +336,10 @@
     return port === "443" ? label : label + " :" + port;
   }
 
-  function renderTable(g, exitShort, showMeasure){
+  function renderTable(g, exitShort){
     var body = $("rows");
     if (!nodes.length) {
-      body.innerHTML = '<tr><td colspan="5" class="dim" style="font-size:12px">正在获取节点…</td></tr>';
+      body.innerHTML = '<tr><td colspan="4" class="dim" style="font-size:12px">正在获取节点…</td></tr>';
       return;
     }
     var rows = nodes.map(function(n){
@@ -353,23 +351,24 @@
       if (a.n.alive !== b.n.alive) return a.n.alive ? -1 : 1;
       return (a.n.delay||9999) - (b.n.delay||9999);
     });
-    var maxv = 1;
-    rows.forEach(function(r){ if (r.sv > maxv) maxv = r.sv; });
     var fastest = null;
     rows.forEach(function(r){ if (r.sv != null && r.sv > 0 && r.n.alive && (!fastest || r.sv > fastest.sv)) fastest = r; });
+    var delayBest = null;
+    rows.forEach(function(r){ if (r.n.alive && r.n.delay > 0 && (!delayBest || r.n.delay < delayBest.d)) delayBest = { r: r, d: r.n.delay }; });
 
     var html = "";
     rows.forEach(function(r){
       var alive = !!r.n.alive;
       var isExit = r.n.short === exitShort;
       var exitMark = isExit ? '<span class="mark ' + (alive ? "use" : "down") + '">' + (alive ? "使用中" : "出口异常") + '</span>' : "";
-      var fastMark = (fastest === r && showMeasure) ? '<span class="mark fast">最快</span>' : "";
+      var fastMark = (fastest === r) ? '<span class="mark fast">最快</span>' : "";
+      var delayMark = (delayBest && delayBest.r === r) ? '<span class="mark fast">最快</span>' : "";
       html += "<tr data-node='" + esc(r.n.short) + "' class='" + (alive ? "" : "dead ") + (isExit ? "current" : "") + "'>"
         + '<td><span class="st ' + (alive ? "ok" : "bad") + '">' + (alive ? "通" : "断") + '</span></td>'
         + '<td class="nm" title="' + esc(r.n.short) + '">' + esc(r.label) + exitMark + '</td>'
-        + '<td class="c ms num">' + (alive ? (r.n.delay ? r.n.delay + "ms" : "—") : "超时") + '</td>'
-        + (showMeasure ? '<td class="num">' + (r.sv != null ? '<span class="mb">' + r.sv.toFixed(1) + ' Mbps</span>' : '<span class="ms">—</span>') + '</td>' : "")
-        + '<td class="c">' + fastMark + '</td></tr>';
+        + '<td class="c ms num">' + (alive ? (r.n.delay ? r.n.delay + "ms" : "—") : "超时") + delayMark + '</td>'
+        + '<td class="num">' + (r.sv != null ? '<span class="mb">' + r.sv.toFixed(1) + ' Mbps</span>' + fastMark : '<span class="ms">—</span>') + '</td>'
+        + '</tr>';
     });
     body.innerHTML = html;
   }
