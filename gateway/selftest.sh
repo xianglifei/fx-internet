@@ -87,15 +87,24 @@ const { chromium } = require('playwright');
     const win = document.querySelector('.win').getBoundingClientRect();
     return { level: s.derived.level, w: win.width,
              state: document.getElementById('st-text').textContent,
-             rows: document.querySelectorAll('#rows tr').length,
-             mech: document.getElementById('mech').textContent,
-             hasToggle: !!document.getElementById('open-btn') };
+             rows: document.querySelectorAll('#rows tr').length };
   });
   const checks = [];
   checks.push(['宽度自适应在 460~720(当前 ' + Math.round(out.w) + ',态 ' + out.level + ')', out.w >= 460 && out.w <= 720]);
   checks.push(['状态文案非空: ' + out.state, out.state.length > 1]);
-  checks.push(['明细平铺常驻:节点表 ' + out.rows + ' 行(无折叠按钮)', out.rows >= 1 && !out.hasToggle]);
-  checks.push(['机制行非空(额度文案): ' + out.mech.slice(0, 24) + '…', out.mech.length > 10]);
+  checks.push(['明细平铺常驻:节点表 ' + out.rows + ' 行', out.rows >= 1]);
+  await page.click('#a-history');
+  await page.waitForTimeout(800);
+  const hist = await page.evaluate(() => ({
+    mainHidden: document.getElementById('main-view').hidden,
+    rows: document.querySelectorAll('#h-list .h-row').length,
+    quota: document.getElementById('h-quota').textContent }));
+  checks.push(['测速历史子页:主视图隐藏,历史 ' + hist.rows + ' 行', hist.mainHidden && hist.rows >= 1]);
+  checks.push(['额度说明在历史页: ' + hist.quota.slice(0, 26) + '…', hist.quota.length > 10]);
+  await page.click('#a-back');
+  await page.waitForTimeout(300);
+  const back = await page.evaluate(() => !document.getElementById('main-view').hidden);
+  checks.push(['返回主视图', back]);
   await browser.close();
   console.log(JSON.stringify({ checks }));
 })().catch(e => { console.error(JSON.stringify({ fatal: e.message })); process.exit(1); });
@@ -108,7 +117,7 @@ if 'fatal' in r: print('  ✗ UI 测试失败:', r['fatal']); sys.exit(1)
 for name, passed in r['checks']:
     print(('  ✓ ' if passed else '  ✗ ') + name)
     if not passed: sys.exit(1)
-"; then PASS=$((PASS+4)); else FAIL=$((FAIL+1)); fi
+"; then PASS=$((PASS+5)); else FAIL=$((FAIL+1)); fi
 
 echo
 echo "结果: $PASS 通过 / $FAIL 失败"

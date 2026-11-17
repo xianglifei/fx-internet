@@ -207,15 +207,15 @@ class Regressions(unittest.TestCase):
         self.assertIn('direct', payload)
         self.assertIn('ok', payload['direct'])
         ui = (ROOT/'gateway/ui/index.html').read_text()
-        # 方案B平铺版:状态带双 chip + 直连卡 + 机制行大白话文案
-        for needle in ('chip-proxy', 'chip-direct', 'direct-card', '只影响测速排名,联网不受影响'):
+        # 方案B去重版:状态带只留双 chip(出口唯一答案在表格「使用中」标记,直连卡已删)
+        for needle in ('chip-proxy', 'chip-direct', 'id="st-text"', 'width:max-content',
+                       'min-width:460px', 'max-width:720px'):
             self.assertIn(needle, ui)
-        # 明细平铺常驻(无折叠按钮)+ 宽度自适应(内容定宽,460~720 限幅)
-        self.assertNotIn('open-btn', ui)
-        self.assertIn('id="st-text"', ui)
-        self.assertIn('width:max-content', ui)
-        self.assertIn('min-width:460px', ui)
-        self.assertIn('max-width:720px', ui)
+        self.assertNotIn('direct-card', ui)
+        self.assertNotIn('strip-exit', ui)
+        # 机制细节收进测速历史子页:入口按钮 + 额度大白话文案 + 倒序历史
+        for needle in ('a-history', 'h-quota', '只影响测速排名,联网不受影响', '/api/events'):
+            self.assertIn(needle, ui)
         # 菜单栏 App 页面自更新契约(版本占位符由桥注入)
         self.assertIn('__UI_VERSION__', ui)
 

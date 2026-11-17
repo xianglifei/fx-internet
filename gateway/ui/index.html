@@ -5,11 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fx-internet</title>
 <style>
-  /* 方案B v4「节点总览表·平铺版」:明细常驻不折叠;宽度自适应(跟随内容,460~720 限幅)。
-     信息优先级:1) 代理通不通(谁在线、当前走谁) 2) 直连通不通 3) 谁最快、上次何时实测;
-     巡检/额度等机制细节弱化置底。
-     尺寸反馈环安全:宽度由内容定(max-content,不依赖视口),高度随内容,panelSize 上报
-     后弹窗贴合——视口尺寸不反向影响布局,无死锁。 */
+  /* 方案B v5「节点总览表·去重平铺版」:
+     - 出口信息只在节点表一处("使用中"标记 + 整行高亮);状态带只剩两个连通 chip
+     - 直连卡删除(顶部"直连通"chip 已足够)
+     - 机制细节(测速额度/花费)收进「测速历史」子页,主视图零机制噪音
+     宽度自适应:卡片 max-content 定宽,460~720 限幅;文本块限宽换行不撑宽卡片。
+     尺寸反馈环安全:宽度不依赖视口,panelSize 上报后弹窗贴合,无死锁。 */
   :root{ color-scheme: light dark; }
   *{ box-sizing:border-box; }
   html,body{ margin:0; padding:0; }
@@ -41,7 +42,7 @@
   body.embedded{ background:transparent; padding:0; justify-content:flex-start; }
   body.embedded .win{ border:none; box-shadow:none; }
 
-  /* 顶部状态带:两个最重要的信号(代理/直连)+ 当前出口 */
+  /* 顶部状态带:两个最重要的连通信号(代理/直连) */
   .strip{
     display:flex; align-items:center; gap:6px; padding:10px 16px;
     background:var(--surface2); border-bottom:1px solid var(--border);
@@ -55,11 +56,6 @@
   .chip.ok{ color:var(--ok); } .chip.ok .d{ background:var(--ok); }
   .chip.bad{ color:var(--bad); border-color:color-mix(in srgb,var(--bad) 40%,var(--border)); }
   .chip.bad .d{ background:var(--bad); }
-  .strip-exit{
-    margin-left:auto; padding-left:12px; font-size:11px; color:var(--dim);
-    min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-  }
-  .strip-exit b{ color:var(--text); font-weight:600; }
 
   /* 断网横幅:代理不通时替换状态带说明区(文本限宽换行,不撑宽卡片) */
   .banner{
@@ -70,7 +66,7 @@
   }
   .banner b{ color:var(--text); }
 
-  /* 主区:一句结论 + 出口明细 */
+  /* 主区:一句结论(+选路模式) */
   .hero{ padding:12px 16px 10px; }
   .state{ display:flex; align-items:center; gap:9px; font-size:19px; font-weight:700; }
   .lamp{ width:12px; height:12px; border-radius:99px; flex:none; background:var(--dim); }
@@ -78,10 +74,8 @@
   .lamp.bad{ background:var(--bad); box-shadow:0 0 0 4px color-mix(in srgb,var(--bad) 16%,transparent); }
   .state.ok{ color:var(--ok); } .state.bad{ color:var(--bad); } .state.dim{ color:var(--dim); }
   .herosub{ font-size:11.5px; color:var(--dim); font-weight:500; }
-  .exitline{ margin-top:8px; font-size:12px; color:var(--dim); max-width:560px; }
-  .exitline b{ color:var(--text); font-weight:600; }
 
-  /* 节点总览表(常驻平铺) */
+  /* 节点总览表(常驻平铺;出口=「使用中」标记+整行高亮,唯一答案) */
   .tblwrap{ padding:10px 16px 2px; }
   .tbl{ width:100%; border-collapse:collapse; }
   .tbl th{
@@ -110,62 +104,69 @@
   .mark.down{ background:color-mix(in srgb,var(--bad) 14%,transparent); color:var(--bad); font-weight:600; }
   .tbl-note{ font-size:10.5px; color:var(--dim); margin:7px 2px 0; line-height:1.55; max-width:560px; }
 
-  /* 直连卡 */
-  .direct{
-    margin:10px 16px 0; display:flex; align-items:center; gap:8px; padding:8px 11px; border-radius:9px;
-    border:1px solid var(--border); background:var(--surface2); font-size:11.5px;
-  }
-  .direct .d{ width:7px; height:7px; border-radius:99px; background:var(--dim); flex:none; }
-  .direct.ok .d{ background:var(--ok); } .direct.bad .d{ background:var(--bad); }
-  .direct b{ font-weight:600; }
-  .direct .why{ margin-left:auto; padding-left:10px; color:var(--dim); font-size:10.5px; white-space:nowrap; }
-
-  /* 机制细节:弱化置底(文本限宽换行,不撑宽卡片) */
-  .mech{
-    margin-top:10px; padding:9px 16px 10px; background:var(--surface2); border-top:1px solid var(--border);
-    font-size:10.5px; color:var(--dim); line-height:1.6; max-width:560px;
-  }
-  .mech b{ color:var(--text); font-weight:600; }
-  .foot{ display:flex; align-items:center; gap:4px; padding:8px 10px 12px; border-top:1px solid var(--border); }
-  .foot .btn{ height:24px; font-size:11px; padding:0 8px; }
   .btn{
-    display:inline-flex; align-items:center; gap:6px; height:26px; padding:0 10px; border-radius:8px;
-    border:1px solid var(--border); background:var(--surface); font-size:12px; color:var(--text);
+    display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 9px; border-radius:8px;
+    border:1px solid var(--border); background:var(--surface); font-size:11px; color:var(--text);
     cursor:pointer;
   }
   .btn.ghost{ border-color:transparent; background:transparent; color:var(--dim); }
   .btn.ghost:hover{ color:var(--text); }
   .btn:disabled{ opacity:.5; cursor:default; }
+  .foot{ display:flex; align-items:center; gap:4px; padding:8px 10px 12px; border-top:1px solid var(--border); }
+  .foot .push{ margin-left:auto; }
+
+  /* 测速历史子页(同窗切换;按时间倒序,最近在最上) */
+  .h-head{
+    display:flex; align-items:center; gap:8px; padding:10px 16px;
+    background:var(--surface2); border-bottom:1px solid var(--border); font-size:13px; font-weight:600;
+  }
+  .h-quota{
+    padding:9px 16px; font-size:10.5px; color:var(--dim); line-height:1.6;
+    border-bottom:1px solid var(--border); max-width:720px;
+  }
+  .h-quota b{ color:var(--text); font-weight:600; }
+  .h-list{ max-height:520px; overflow-y:auto; }
+  .h-row{ display:flex; align-items:baseline; gap:10px; padding:6px 16px; border-bottom:1px solid var(--track); font-size:11.5px; }
+  .h-row:last-child{ border-bottom:none; }
+  .h-t{ color:var(--dim); width:88px; flex:none; }
+  .h-type{ width:64px; flex:none; font-weight:600; }
+  .h-sum{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .h-cost{ width:70px; flex:none; text-align:right; color:var(--dim); }
 </style>
 </head>
 <body>
 <div class="win" id="win">
-  <div class="strip" id="strip">
-    <span class="chip" id="chip-proxy"><span class="d"></span><span id="chip-proxy-t">代理…</span></span>
-    <span class="chip" id="chip-direct"><span class="d"></span><span id="chip-direct-t">直连…</span></span>
-    <span class="strip-exit" id="strip-exit"></span>
-  </div>
-  <div class="banner" id="banner" hidden></div>
+  <div id="main-view">
+    <div class="strip" id="strip">
+      <span class="chip" id="chip-proxy"><span class="d"></span><span id="chip-proxy-t">代理…</span></span>
+      <span class="chip" id="chip-direct"><span class="d"></span><span id="chip-direct-t">直连…</span></span>
+    </div>
+    <div class="banner" id="banner" hidden></div>
 
-  <div class="hero">
-    <div class="state" id="st"><span class="lamp" id="lamp"></span><span id="st-text">连接中…</span><span class="herosub" id="l1-sub"></span></div>
-    <div class="exitline" id="l1-exit"></div>
+    <div class="hero">
+      <div class="state" id="st"><span class="lamp" id="lamp"></span><span id="st-text">连接中…</span><span class="herosub" id="l1-sub"></span></div>
+    </div>
+
+    <div class="tblwrap">
+      <table class="tbl">
+        <thead><tr><th>状态</th><th>节点</th><th class="r">延迟</th><th>实测(<span id="th-sweep-at">—</span>)</th><th class="r">标记</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="5" class="dim" style="font-size:12px">正在获取节点…</td></tr></tbody>
+      </table>
+      <div class="tbl-note" id="tbl-note"></div>
+    </div>
+
+    <div class="foot">
+      <button class="btn ghost" id="a-patrol">立即巡检</button>
+      <button class="btn ghost" id="a-handoff">交还常规</button>
+      <button class="btn ghost" id="a-restart">重启内核</button>
+      <button class="btn ghost push" id="a-history">测速历史</button>
+    </div>
   </div>
 
-  <div class="tblwrap">
-    <table class="tbl">
-      <thead><tr><th>状态</th><th>节点</th><th class="r">延迟</th><th>实测(<span id="th-sweep-at">—</span>)</th><th class="r">标记</th></tr></thead>
-      <tbody id="rows"><tr><td colspan="5" class="dim" style="font-size:12px">正在获取节点…</td></tr></tbody>
-    </table>
-    <div class="tbl-note" id="tbl-note"></div>
-  </div>
-
-  <div class="direct" id="direct-card"><span class="d"></span><span id="direct-t">直连检测中…</span><span class="why" id="direct-why"></span></div>
-  <div class="mech" id="mech"></div>
-  <div class="foot">
-    <button class="btn ghost" id="a-patrol">立即巡检</button>
-    <button class="btn ghost" id="a-handoff">交还常规</button>
-    <button class="btn ghost" id="a-restart">重启内核</button>
+  <div id="history-view" hidden>
+    <div class="h-head"><button class="btn ghost" id="a-back">‹ 返回</button><span>测速历史</span></div>
+    <div class="h-quota" id="h-quota"></div>
+    <div class="h-list" id="h-list"><div class="h-row dim">加载中…</div></div>
   </div>
 </div>
 
@@ -228,20 +229,16 @@
 
     // ---- 出口与模式 ----
     var exitShort = g.pinned ? g.proxy_now_short : g.auto_now_short;
-    var exitNode = null;
-    for (var i = 0; i < nodes.length; i++) if (nodes[i].short === exitShort) exitNode = nodes[i];
     var modeText = g.pinned ? "巡检钉住" : "常规模式自动选优";
 
     // ---- 状态带 chips ----
     var down = HARD_DOWN[d.reason] && d.level === "red";
-    var budgetOut = !!(p.last_event && p.last_event.type === "budget_exhausted");
     var proxySt = d.reason === "status_unknown" ? "dim" : (down ? "bad" : "ok");
     setChip($("chip-proxy"), $("chip-proxy-t"), proxySt,
             proxySt === "ok" ? "代理通" : proxySt === "bad" ? "代理不通" : "代理…");
     var dirSt = dir.ok === true ? "ok" : dir.ok === false ? "bad" : "dim";
     setChip($("chip-direct"), $("chip-direct-t"), dirSt,
             dirSt === "ok" ? "直连通" : dirSt === "bad" ? "直连不通" : "直连…");
-    $("strip-exit").innerHTML = "出口 <b>" + esc(nodeLabel(exitShort)) + "</b> · " + esc(modeText);
 
     // ---- 状态带 vs 断网横幅 ----
     var banner = $("banner");
@@ -255,7 +252,7 @@
       banner.innerHTML = "";
     }
 
-    // ---- 一级结论(状态灯 + st-text) ----
+    // ---- 一级结论(状态灯 + st-text;选路模式是此处唯一模式信息) ----
     var stText, stCls;
     if (down) { stText = "代理不通"; stCls = "bad"; }
     else if (d.reason === "status_unknown") { stText = "状态获取中"; stCls = "dim"; }
@@ -268,37 +265,10 @@
     $("lamp").className = "lamp " + stCls;
     $("l1-sub").textContent = down ? "" : modeText;
 
-    // ---- 出口明细行 ----
-    var bits = [];
-    if (exitShort) {
-      bits.push("出口 <b>" + esc(nodeLabel(exitShort)) + "</b>");
-      if (exitNode) bits.push("健康 " + (exitNode.alive ? "<b class='num'>" + esc(exitNode.delay) + " ms</b>" : "<b>超时</b>"));
-      if (sweep && sweep[exitShort] > 0) bits.push("实测 <b class='num'>" + sweep[exitShort].toFixed(1) + "</b> Mbps" + (sweepAt ? "(" + esc(sweepAt) + ")" : ""));
-      $("l1-exit").innerHTML = bits.join(" · ");
-    } else {
-      $("l1-exit").textContent = "";
-    }
-
-    // ---- 节点总览表(常驻平铺) ----
+    // ---- 节点总览表(出口=「使用中」标记+整行高亮,唯一出口信息) ----
     renderTable(g, exitShort);
     $("th-sweep-at").textContent = sweepAt || "—";
     $("tbl-note").textContent = tableNote();
-
-    // ---- 直连卡 ----
-    var dc = $("direct-card");
-    dc.className = "direct " + (dirSt === "ok" ? "ok" : dirSt === "bad" ? "bad" : "");
-    $("direct-t").innerHTML = dirSt === "ok"
-      ? "<b>直连通</b>&nbsp;国内网络正常,微信/淘宝/银行照常"
-      : dirSt === "bad"
-        ? "<b>直连不通</b>&nbsp;检查 Wi-Fi/网线:国内网站也打不开时,与代理无关"
-        : "直连检测中…";
-    $("direct-why").textContent = dir.checked_at ? "不走代理 · " + dir.checked_at : "不走代理";
-
-    // ---- 机制行(弱化) ----
-    var mech = "今日测速额度 <b class='num'>" + esc(p.cost_today_mb) + "</b> / <b class='num'>" + esc(p.quota_mb) + "</b> MB";
-    if (budgetOut) mech += " · 已用完——<b>只影响测速排名,联网不受影响</b>,明早 00:00 自动恢复";
-    mech += " · 实时 " + esc((s.traffic.mbps || 0).toFixed(1)) + " Mbps · 下次巡检 " + esc(p.next_run) + " · 端口 " + esc(s.kernel.port);
-    $("mech").innerHTML = mech;
 
     postSize();
   }
@@ -366,6 +336,76 @@
     return parts.join(" · ");
   }
 
+  // ---- 测速历史子页 ----
+  function showHistory(on){
+    $("main-view").hidden = on;
+    $("history-view").hidden = !on;
+    if (on) renderHistory();
+    postSize();
+  }
+
+  var EV_TYPE = {
+    steady_ok:"轻探测", pin_ok:"轻探测", keep_pin:"轻探测", keep_auto:"轻探测",
+    congestion_pin:"全量测速", fault_switch:"全量测速", repin:"全量测速",
+    handoff:"交还自动", all_dead:"全量测速", budget_exhausted:"省流量模式",
+    error:"巡检异常", skip:"跳过"
+  };
+
+  function evSummary(e){
+    var sw = e.sweep, best = null;
+    if (sw) {
+      for (var k in sw) if (sw[k] > 0 && (!best || sw[k] > best.v)) best = { n: k, v: sw[k] };
+      if (best) return "最快 " + nodeLabel(best.n) + " " + best.v.toFixed(1) + " Mbps";
+      return "全部节点无响应";
+    }
+    switch (e.type) {
+      case "steady_ok": return "出口 " + nodeLabel(e.exit) + " " + (e.mbps != null ? e.mbps : "") + " Mbps 达标";
+      case "pin_ok": return "钉住节点 " + (e.mbps != null ? e.mbps : "") + " Mbps 达标,回归观察";
+      case "keep_pin": return "维持钉住 " + (e.pinned || "") + ",无更优节点";
+      case "keep_auto": return "保持常规模式,无更优节点";
+      case "all_dead": return "全部节点失联,持续重试中";
+      case "budget_exhausted": return "额度用尽,只做连通检查";
+      case "handoff": return "交还常规模式自动选优";
+      case "error": return "异常:" + (e.error || "");
+      case "skip": return "跳过(" + (e.reason || "") + ")";
+      default: return e.type;
+    }
+  }
+
+  function renderHistory(){
+    var p = last ? last.patrol : {};
+    var q = $("h-quota");
+    var qhtml = "今日已用 <b class='num'>" + esc(p.cost_today_mb != null ? p.cost_today_mb : "…") + "</b> / <b class='num'>" + esc(p.quota_mb != null ? p.quota_mb : "…") + "</b> MB";
+    if (p.last_event && p.last_event.type === "budget_exhausted") qhtml += " · 已用完——<b>只影响测速排名,联网不受影响</b>,明早 00:00 自动恢复";
+    qhtml += " · 全量测速约 25 MB/次,轻探测约 4 MB/次 · 下次巡检 " + esc(p.next_run || "…");
+    q.innerHTML = qhtml;
+
+    var list = $("h-list");
+    list.innerHTML = '<div class="h-row dim">加载中…</div>';
+    fetch("/api/events").then(function(r){ return r.json(); }).then(function(d){
+      var evs = (d.events || []).slice().reverse().slice(0, 60);
+      if (!evs.length) { list.innerHTML = '<div class="h-row dim">暂无记录</div>'; return; }
+      var html = "";
+      evs.forEach(function(e){
+        var type = EV_TYPE[e.type] || e.type;
+        html += "<div class='h-row'>"
+          + "<span class='h-t num'>" + esc((e.ts || "").slice(5, 16)) + "</span>"
+          + "<span class='h-type " + (e.type === "all_dead" || e.type === "error" ? "" : "dim") + "'>" + esc(type) + "</span>"
+          + "<span class='h-sum'" + (e.sweep ? " title='" + esc(sweepTitle(e.sweep)) + "'" : "") + ">" + esc(evSummary(e)) + "</span>"
+          + "<span class='h-cost num'>" + (e.cost_mb > 0 ? "−" + e.cost_mb + " MB" : "—") + "</span>"
+          + "</div>";
+      });
+      list.innerHTML = html;
+    }).catch(function(){
+      list.innerHTML = '<div class="h-row dim">读取失败,稍后再试</div>';
+    });
+  }
+  function sweepTitle(sw){
+    var parts = [];
+    for (var k in sw) parts.push(nodeLabel(k) + " " + sw[k].toFixed(1));
+    return parts.join(" · ");
+  }
+
   function poll(){
     fetch("/api/status").then(function(r){ return r.json(); }).then(render)
       .catch(function(){
@@ -405,6 +445,8 @@
   $("a-patrol").addEventListener("click", function(){ act("patrol-now", this); });
   $("a-handoff").addEventListener("click", function(){ act("handoff-auto", this); });
   $("a-restart").addEventListener("click", function(){ act("kernel-restart", this); });
+  $("a-history").addEventListener("click", function(){ showHistory(true); });
+  $("a-back").addEventListener("click", function(){ showHistory(false); });
 
   poll();
   pollProviders();
