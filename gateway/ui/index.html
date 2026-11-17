@@ -103,6 +103,10 @@
     content:''; position:absolute; left:50%; transform:translateX(-50%); bottom:100%;
     border:5px solid transparent; border-top-color:light-dark(#1b2334,#e7edf6);
   }
+  /* down 修饰:紧贴卡片顶部的 ⓘ 向下弹出,避免被 overflow:hidden 裁掉 */
+  .tip.down::after{ bottom:auto; top:calc(100% + 7px); }
+  .tip.down::before{ bottom:auto; top:100%; transform:translateX(-50%) rotate(180deg);
+    border-top-color:transparent; border-bottom-color:light-dark(#1b2334,#e7edf6); }
   .tbl td{ padding:6px 6px; border-bottom:1px solid var(--track); font-size:12px; vertical-align:middle; }
   .tbl tr:last-child td{ border-bottom:none; }
   .st{ display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; white-space:nowrap; }
@@ -167,12 +171,12 @@
 
     <div class="hero">
       <div class="state" id="st"><span id="st-text">连接中…</span></div>
-      <div class="herosub"><span id="l1-sub"></span><span class="tip" data-tip="选路规则:按延迟=内核持续挑延迟最低的节点,免费零流量;按实测=白天每 3 小时实测所有节点,拥塞/故障时钉住最快(约 48MB/次);按手动=你点谁用谁,测量照跑、切换权在你">ⓘ</span></div>
+      <div class="herosub"><span id="l1-sub"></span><span class="tip down" data-tip="选路规则:按延迟=持续挑延迟最低的节点,免费;按实测=定时实测全部节点,拥塞时钉最快;按手动=你点谁用谁">ⓘ</span></div>
     </div>
 
     <div class="tblwrap">
       <table class="tbl">
-        <thead><tr><th>状态</th><th>节点</th><th class="c">延迟(<span id="th-health-at">—</span>)<span class="tip" data-tip="内核健康检查:每 5 分钟一轮,小请求走节点往返一圈的时间(ms),反映反应速度;通断状态也来自它">ⓘ</span></th><th>实测(<span id="th-sweep-at">—</span>)<span class="tip" data-tip="全量实测:让每个节点下载一个 8MB 测试文件,测出的持续下载速度(Mbps);拥堵/故障时或定时(白天约每 3 小时)触发">ⓘ</span></th></tr></thead>
+        <thead><tr><th>状态</th><th>节点</th><th>延迟(<span id="th-health-at">—</span>)<span class="tip" data-tip="内核健康检查:每 5 分钟一轮,小请求走节点往返一圈的时间(ms),反映反应速度;通断状态也来自它">ⓘ</span></th><th>实测(<span id="th-sweep-at">—</span>)<span class="tip" data-tip="全量实测:让每个节点下载一个 8MB 测试文件,测出的持续下载速度(Mbps);拥堵/故障时或定时(白天约每 3 小时)触发">ⓘ</span></th></tr></thead>
         <tbody id="rows"><tr><td colspan="5" class="dim" style="font-size:12px">正在获取节点…</td></tr></tbody>
       </table>
     </div>
@@ -366,7 +370,7 @@
       html += "<tr data-node='" + esc(r.n.short) + "' class='" + (alive ? "" : "dead ") + (isExit ? "current" : "") + "'>"
         + '<td><span class="st ' + (alive ? "ok" : "bad") + '">' + (alive ? "通" : "断") + '</span></td>'
         + '<td class="nm" title="' + esc(r.n.short) + '">' + esc(r.label) + exitMark + '</td>'
-        + '<td class="c ms num">' + (alive ? (r.n.delay ? r.n.delay + "ms" : "—") : "超时") + delayMark + '</td>'
+        + '<td class="ms num">' + (alive ? (r.n.delay ? r.n.delay + "ms" : "—") : "超时") + delayMark + '</td>'
         + '<td class="num">' + (r.sv != null ? '<span class="mb">' + r.sv.toFixed(1) + ' Mbps</span>' + fastMark : '<span class="ms">—</span>') + '</td>'
         + '</tr>';
     });
