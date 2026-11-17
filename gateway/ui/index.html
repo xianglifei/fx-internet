@@ -185,6 +185,14 @@
 (function(){
   var $ = function(id){ return document.getElementById(id); };
   var open = false, last = null, sweep = null, sweepAt = null, nodes = [], lastPosted = "";
+  // UI 版本(桥按文件内容哈希注入):菜单栏 App 页面常驻不重载,据此自查过期自动刷新
+  var UI_VERSION = "__UI_VERSION__";
+  setInterval(function(){
+    if (!UI_VERSION || UI_VERSION === "__UI_VERSION__") return;
+    fetch("/api/ui-version").then(function(r){ return r.json(); }).then(function(d){
+      if (d.v && d.v !== UI_VERSION) location.reload();
+    }).catch(function(){});
+  }, 20000);
 
   // 嵌入菜单栏 popover(WKWebView)时:贴合气泡、把窗口尺寸实时报给原生侧
   var embedded = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.panelSize);

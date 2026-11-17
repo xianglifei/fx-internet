@@ -21,6 +21,7 @@
 """
 import datetime
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -86,6 +87,23 @@ DIRECT = {"ok": None, "ts": 0}      # 直连(国内)连通性,30s 一测;面板"
 # 国内 204 探测端点,依次尝试;经 ProxyHandler({}) 强制绕过任何代理,零代理流量
 DIRECT_PROBES = ["http://connect.rom.miui.com/generate_204",
                  "http://223.5.5.5/generate_204"]
+
+# UI 版本(内容 sha256 前 8 位):菜单栏 App 的页面常驻不重载,页面据此自查过期并
+# 自动刷新;按 (mtime,size) 缓存,请求路径不做重复哈希
+UI_VERSION_STATE = {"key": None, "v": None}
+
+
+def ui_version():
+    try:
+        st = os.stat(UI_FILE)
+        key = (st.st_mtime_ns, st.st_size)
+        if key != UI_VERSION_STATE["key"]:
+            with open(UI_FILE, "rb") as f:
+                UI_VERSION_STATE["v"] = hashlib.sha256(f.read()).hexdigest()[:8]
+            UI_VERSION_STATE["key"] = key
+        return UI_VERSION_STATE["v"]
+    except OSError:
+        return None
 
 
 def log(msg):
@@ -518,14 +536,22 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/", "/index.html"):
             try:
                 with open(UI_FILE) as f:
-                    body = f.read().encode()
+                    body = f.read()
+                v = ui_version()
+                if v:
+                    body = body.replace("__UI_VERSION__", v)
+                body = body.encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
+                # 菜单栏 App 重启后不得吃 WKWebView 磁盘缓存的旧页
+                self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(body)
             except OSError:
                 self._json({"error": "UI 文件缺失"}, 500)
+        elif self.path == "/api/ui-version":
+            self._json({"v": ui_version()})
         elif self.path == "/api/token":
             self._json({"token": WRITE_TOKEN})
         elif self.path == "/api/status":

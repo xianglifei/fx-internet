@@ -108,6 +108,9 @@ gateway/teardown.sh --full   # 切换后反悔:停自研栈,巡检改回,重开 
   绕过代理,零代理流量),`/api/status` 新增 `direct` 字段;面板按方案B v3「节点总览表」重排——
   状态带(代理/直连/出口)→ 节点总览表(通断/延迟/实测/标记)→ 直连卡,机制细节弱化置底。
   节点通断/延迟来自 mihomo 健康检查(UI 经 `/api/mihomo/providers/proxies/JMS` 轮询,60s)。
+- **UI 自更新(2026-11-17 起)**:菜单栏 App 的页面常驻不重载(避免闪白),桥在服务页面时
+  注入内容哈希版本号(`/api/ui-version` 同源);页面每 20s 自查,发现文件更新即自动刷新,
+  改 UI 后无需重启 App。UI 响应带 `Cache-Control: no-store`,防止 WKWebView 磁盘缓存旧页。
 - **环境变量**(plist 已实例化,改默认值需重跑 setup 或手改 plist):
 
 | 变量 | 默认 | 含义 |
