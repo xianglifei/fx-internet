@@ -173,14 +173,21 @@
 (function(){
   var $ = function(id){ return document.getElementById(id); };
   var last = null, sweep = null, sweepAt = null, nodes = [], lastPosted = "";
-  // UI 版本(桥按文件内容哈希注入):菜单栏 App 页面常驻不重载,据此自查过期自动刷新
+  // UI 版本(桥按文件内容哈希注入):菜单栏 App 页面常驻不重载,据此自查过期自动刷新。
+  // 注意 App Nap:面板收起时整个 App 被挂起,定时器不跑——所以除了 20s 节拍,
+  // 还必须在页面变为可见的那一刻(用户点开面板)立刻查一次,否则会看到旧页面。
   var UI_VERSION = "__UI_VERSION__";
-  setInterval(function(){
+  function checkUiVersion(){
     if (!UI_VERSION || UI_VERSION === "__UI_VERSION__") return;
     fetch("/api/ui-version").then(function(r){ return r.json(); }).then(function(d){
       if (d.v && d.v !== UI_VERSION) location.reload();
     }).catch(function(){});
-  }, 20000);
+  }
+  setInterval(checkUiVersion, 20000);
+  document.addEventListener("visibilitychange", function(){
+    if (!document.hidden) checkUiVersion();
+  });
+  checkUiVersion();
 
   // 嵌入菜单栏 popover(WKWebView)时:贴合气泡、把窗口尺寸实时报给原生侧
   var embedded = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.panelSize);
