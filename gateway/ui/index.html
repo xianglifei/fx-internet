@@ -69,14 +69,14 @@
   }
   .banner b{ color:var(--text); }
 
-  /* 主区:一句结论(+选路模式) */
-  .hero{ padding:12px 16px 10px; }
-  .state{ display:flex; align-items:center; gap:9px; font-size:19px; font-weight:700; }
+  /* 主区:一句结论(+选路模式),整体居中 */
+  .hero{ padding:12px 16px 10px; text-align:center; }
+  .state{ display:inline-flex; align-items:center; justify-content:center; gap:9px; font-size:19px; font-weight:700; }
   .lamp{ width:12px; height:12px; border-radius:99px; flex:none; background:var(--dim); }
   .lamp.ok{ background:var(--ok); box-shadow:0 0 0 4px color-mix(in srgb,var(--ok) 16%,transparent); }
   .lamp.bad{ background:var(--bad); box-shadow:0 0 0 4px color-mix(in srgb,var(--bad) 16%,transparent); }
   .state.ok{ color:var(--ok); } .state.bad{ color:var(--bad); } .state.dim{ color:var(--dim); }
-  .herosub{ font-size:11.5px; color:var(--dim); font-weight:500; }
+  .herosub{ margin-top:5px; font-size:11px; color:var(--dim); font-weight:500; }
 
   /* 节点总览表(常驻平铺;出口=「使用中」标记+整行高亮,唯一答案) */
   .tblwrap{ padding:10px 16px 2px; }
@@ -86,6 +86,21 @@
     padding:4px 6px; border-bottom:1px solid var(--border); white-space:nowrap;
   }
   .tbl th.r,.tbl td.r{ text-align:right; }
+  .tbl th.c,.tbl td.c{ text-align:center; }
+  /* 表头 ⓘ 悬停提示(纯 CSS,无 JS) */
+  .tip{ position:relative; cursor:help; margin-left:3px; color:var(--dim); font-size:9px; }
+  .tip:hover::after{
+    content:attr(data-tip); position:absolute; left:50%; transform:translateX(-50%);
+    bottom:calc(100% + 7px); z-index:5; width:250px; white-space:normal;
+    background:light-dark(#1b2334,#e7edf6); color:light-dark(#fff,#0b101a);
+    font-size:10.5px; line-height:1.55; font-weight:400; letter-spacing:0;
+    padding:8px 10px; border-radius:8px; text-align:left;
+    box-shadow:0 2px 10px rgba(0,0,0,.25);
+  }
+  .tip:hover::before{
+    content:''; position:absolute; left:50%; transform:translateX(-50%); bottom:100%;
+    border:5px solid transparent; border-top-color:light-dark(#1b2334,#e7edf6);
+  }
   .tbl td{ padding:6px 6px; border-bottom:1px solid var(--track); font-size:12px; vertical-align:middle; }
   .tbl tr:last-child td{ border-bottom:none; }
   .st{ display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; white-space:nowrap; }
@@ -105,7 +120,6 @@
   .mark.use{ background:color-mix(in srgb,var(--accent) 14%,transparent); color:var(--accent); font-weight:600; }
   .mark.fast{ background:color-mix(in srgb,var(--ok) 14%,transparent); color:var(--ok); font-weight:600; }
   .mark.down{ background:color-mix(in srgb,var(--bad) 14%,transparent); color:var(--bad); font-weight:600; }
-  .tbl-note{ font-size:10.5px; color:var(--dim); margin:7px 2px 0; line-height:1.55; max-width:560px; }
 
   .btn{
     display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 9px; border-radius:8px;
@@ -147,15 +161,15 @@
     <div class="banner" id="banner" hidden></div>
 
     <div class="hero">
-      <div class="state" id="st"><span class="lamp" id="lamp"></span><span id="st-text">连接中…</span><span class="herosub" id="l1-sub"></span></div>
+      <div class="state" id="st"><span class="lamp" id="lamp"></span><span id="st-text">连接中…</span></div>
+      <div class="herosub" id="l1-sub"></div>
     </div>
 
     <div class="tblwrap">
       <table class="tbl">
-        <thead><tr><th>状态</th><th>节点</th><th class="r">延迟(<span id="th-health-at">—</span>)</th><th>实测(<span id="th-sweep-at">—</span>)</th><th class="r">标记</th></tr></thead>
+        <thead><tr><th>状态</th><th>节点</th><th class="c">延迟(<span id="th-health-at">—</span>)<span class="tip" data-tip="内核健康检查:每 5 分钟一轮,小请求走节点往返一圈的时间(ms),反映反应速度;通断状态也来自它">ⓘ</span></th><th>实测(<span id="th-sweep-at">—</span>)<span class="tip" data-tip="全量实测:让每个节点下载一个 8MB 测试文件,测出的持续下载速度(Mbps);拥堵/故障时或定时(白天约每 3 小时)触发">ⓘ</span></th><th class="c">标记</th></tr></thead>
         <tbody id="rows"><tr><td colspan="5" class="dim" style="font-size:12px">正在获取节点…</td></tr></tbody>
       </table>
-      <div class="tbl-note" id="tbl-note"></div>
     </div>
 
     <div class="foot">
@@ -271,6 +285,7 @@
     $("st").className = "state " + stCls;
     $("lamp").className = "lamp " + stCls;
     $("l1-sub").textContent = down ? "" : modeText;
+    $("l1-sub").hidden = !!down;
 
     // ---- 底部按钮的条件可见性(需要时才提供) ----
     // 恢复自动选优:仅钉住状态有意义(把出口交还回 AUTO 自动选优)
@@ -284,7 +299,6 @@
     nodes.forEach(function(n){ if (n.at && (!healthAt || n.at > healthAt)) healthAt = n.at; });
     $("th-health-at").textContent = healthAt || "—";
     $("th-sweep-at").textContent = sweepAt || "—";
-    $("tbl-note").textContent = tableNote();
     if (!$("history-view").hidden) $("h-quota").innerHTML = quotaLine(p);
 
     postSize();
@@ -335,18 +349,13 @@
       html += "<tr class='" + (alive ? "" : "dead ") + (isExit ? "current" : "") + "'>"
         + '<td><span class="st ' + (alive ? "ok" : "bad") + '">' + (alive ? "通" : "断") + '</span></td>'
         + '<td class="nm" title="' + esc(r.n.short) + '">' + esc(r.label) + '</td>'
-        + '<td class="r ms num">' + (alive ? (r.n.delay ? r.n.delay + "ms" : "—") : "超时") + '</td>'
+        + '<td class="c ms num">' + (alive ? (r.n.delay ? r.n.delay + "ms" : "—") : "超时") + '</td>'
         + '<td><div class="cellbar">'
-        + (r.sv != null ? '<div class="rowbar"><i style="width:' + Math.max(r.sv/maxv*100, 2) + '%"></i></div><span class="mb num">' + r.sv.toFixed(1) + '</span>' : '<span class="ms">—</span>')
+        + (r.sv != null ? '<div class="rowbar"><i style="width:' + Math.max(r.sv/maxv*100, 2) + '%"></i></div><span class="mb num">' + r.sv.toFixed(1) + ' Mbps</span>' : '<span class="ms">—</span>')
         + '</div></td>'
-        + '<td class="r">' + marks + '</td></tr>';
+        + '<td class="c">' + marks + '</td></tr>';
     });
     body.innerHTML = html;
-  }
-
-  function tableNote(){
-    return "通断/延迟 = 内核健康检查,每 5 分钟一轮 · 实测 = 所有节点逐个测吞吐,"
-         + "拥堵/故障时或定时(白天约每 3 小时)触发";
   }
 
   // ---- 实测历史子页 ----
