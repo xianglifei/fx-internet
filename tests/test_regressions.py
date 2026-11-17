@@ -219,6 +219,12 @@ class Regressions(unittest.TestCase):
         # 操作按钮按需出现:交还改名「恢复自动选优」(默认 hidden,钉住时显示);重启内核默认 hidden
         self.assertIn('id="a-handoff" hidden>恢复自动选优', ui)
         self.assertIn('id="a-restart" hidden>重启内核', ui)
+        # 手动测试按钮:「立即巡检」拆分为延迟测试+下载实测,历史改名「测试历史」
+        self.assertNotIn('a-patrol', ui)
+        for needle in ('id="a-delay">延迟测试', 'id="a-sweep">下载实测',
+                       'id="a-history">测试历史', 'manual-delay', 'manual-sweep',
+                       '手动 · ', '手动实测不计入额度'):
+            self.assertIn(needle, ui)
         # 菜单栏 App 页面自更新契约(版本占位符由桥注入)
         self.assertIn('__UI_VERSION__', ui)
 
@@ -233,6 +239,25 @@ class Regressions(unittest.TestCase):
         for h in (9, 10, 12, 13, 15, 16, 18, 19, 21, 22):
             self.assertFalse(p.is_quiet_hour(datetime.datetime(2026, 11, 17, h, 10)))
             self.assertFalse(p.is_sweep_hour(datetime.datetime(2026, 11, 17, h, 10)))
+
+    def test_manual_mode_bypasses_budget_and_skips_usage(self):
+        # 手动触发(面板按钮):不受额度限制,也不把流量计入每日额度(usage 文件不增长)
+        with patch.object(p, 'MANUAL', False), \
+             patch.object(p, 'usage', return_value={'date': 'x', 'bytes': 10 ** 12}):
+            with self.assertRaises(p.BudgetExceeded):
+                p.check_budget(1000)
+        with patch.object(p, 'MANUAL', True), \
+             patch.object(p, 'usage', return_value={'date': 'x', 'bytes': 10 ** 12}):
+            p.check_budget(1000)  # 手动模式:超额也放行
+        with tempfile.TemporaryDirectory() as d, \
+             patch.object(p, 'MANUAL', True), \
+             patch.object(p, 'USAGE_PATH', d + '/usage'), \
+             patch.object(p, 'alive', return_value=True), \
+             patch.object(p, 'curl_measure', return_value=('200', 10000000)):
+            ok, mbps = p.measure(p.PROBE_BYTES)
+        self.assertTrue(ok)
+        self.assertAlmostEqual(mbps, 80.0)
+        self.assertFalse(os.path.exists(d + '/usage'))  # usage 未增长=未计入额度
 
 
 if __name__ == '__main__':

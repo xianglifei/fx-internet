@@ -132,7 +132,7 @@
   .h-row{ display:flex; align-items:baseline; gap:10px; padding:6px 16px; border-bottom:1px solid var(--track); font-size:11.5px; }
   .h-row:last-child{ border-bottom:none; }
   .h-t{ color:var(--dim); width:88px; flex:none; }
-  .h-type{ width:64px; flex:none; font-weight:600; }
+  .h-type{ width:92px; flex:none; font-weight:600; }
   .h-sum{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .h-cost{ width:70px; flex:none; text-align:right; color:var(--dim); }
 </style>
@@ -159,15 +159,16 @@
     </div>
 
     <div class="foot">
-      <button class="btn ghost" id="a-patrol">立即巡检</button>
+      <button class="btn ghost" id="a-delay">延迟测试</button>
+      <button class="btn ghost" id="a-sweep">下载实测</button>
       <button class="btn ghost" id="a-handoff" hidden>恢复自动选优</button>
-      <button class="btn ghost push" id="a-history">实测历史</button>
+      <button class="btn ghost push" id="a-history">测试历史</button>
       <button class="btn ghost" id="a-restart" hidden>重启内核</button>
     </div>
   </div>
 
   <div id="history-view" hidden>
-    <div class="h-head"><button class="btn ghost" id="a-back">‹ 返回</button><span>实测历史</span></div>
+    <div class="h-head"><button class="btn ghost" id="a-back">‹ 返回</button><span>测试历史</span></div>
     <div class="h-quota" id="h-quota"></div>
     <div class="h-list" id="h-list"><div class="h-row dim">加载中…</div></div>
   </div>
@@ -360,7 +361,8 @@
     steady_ok:"轻探测", pin_ok:"轻探测", keep_pin:"轻探测", keep_auto:"轻探测",
     congestion_pin:"全量实测", fault_switch:"全量实测", repin:"全量实测",
     handoff:"交还自动", all_dead:"全量实测", budget_exhausted:"省流量模式",
-    night_ok:"夜间静默", error:"巡检异常", skip:"跳过"
+    night_ok:"夜间静默", manual_delay:"延迟测试", manual_sweep:"下载实测",
+    error:"巡检异常", skip:"跳过"
   };
 
   function evSummary(e){
@@ -375,6 +377,9 @@
       case "pin_ok": return "钉住节点 " + (e.mbps != null ? e.mbps : "") + " Mbps 达标,回归观察";
       case "keep_pin": return "维持钉住 " + (e.pinned || "") + ",无更优节点";
       case "keep_auto": return "保持常规模式,无更优节点";
+      case "manual_delay": return (e.error ? "失败:" + e.error
+          : (e.alive != null ? e.alive + "/" + e.total + " 节点存活" : "")
+            + (e.best ? ",最快 " + e.best + " " + e.best_ms + "ms" : ""));
       case "all_dead": return "全部节点失联,持续重试中";
       case "budget_exhausted": return "额度用尽,只做连通检查";
       case "night_ok": return "连通正常,夜间未测吞吐";
@@ -388,7 +393,7 @@
   function quotaLine(p){
     var qhtml = "今日已用 <b class='num'>" + esc(p.cost_today_mb != null ? p.cost_today_mb : "…") + "</b> / <b class='num'>" + esc(p.quota_mb != null ? p.quota_mb : "…") + "</b> MB";
     if (p.last_event && p.last_event.type === "budget_exhausted") qhtml += " · 已用完——<b>只影响测速排名,联网不受影响</b>,明早 00:00 自动恢复";
-    return qhtml + " · 全量实测约 48 MB/次,轻探测约 4 MB/次,夜间 0-7 点只查连通 · 下次巡检 " + esc(p.next_run || "…");
+    return qhtml + " · 全量实测约 48 MB/次,轻探测约 4 MB/次,夜间 0-7 点只查连通(手动实测不计入额度) · 下次巡检 " + esc(p.next_run || "…");
   }
 
   function renderHistory(){
@@ -401,7 +406,9 @@
       if (!evs.length) { list.innerHTML = '<div class="h-row dim">暂无记录</div>'; return; }
       var html = "";
       evs.forEach(function(e){
-        var type = e.sweep ? "全量实测" : (EV_TYPE[e.type] || e.type);
+        var label = e.manual ? (EV_TYPE[e.type] || e.type)
+                             : (e.sweep ? "全量实测" : (EV_TYPE[e.type] || e.type));
+        var type = (e.manual ? "手动 · " : "自动 · ") + label;
         html += "<div class='h-row'>"
           + "<span class='h-t num'>" + esc((e.ts || "").slice(5, 16)) + "</span>"
           + "<span class='h-type " + (e.type === "all_dead" || e.type === "error" ? "" : "dim") + "'>" + esc(type) + "</span>"
@@ -447,16 +454,21 @@
       .catch(function(){});
   }
 
-  function act(name, btn){
-    if(btn){ btn.disabled = true; setTimeout(function(){ btn.disabled = false; }, 8000); }
+  function act(name, btn, opts){
+    opts = opts || {};
+    if(btn){ btn.disabled = true; setTimeout(function(){ btn.disabled = false; }, opts.disable || 8000); }
     fetch("/api/token").then(function(r){ if(!r.ok) throw Error("无法获取操作凭证"); return r.json(); })
       .then(function(auth){ return fetch("/api/actions/" + name, { method: "POST", headers: {"X-FX-Token": auth.token} }); })
       .then(function(r){ return r.json(); })
-      .then(function(j){ if(!j.ok) throw Error(j.msg || "操作失败"); setTimeout(poll, name === "patrol-now" ? 6000 : 2000); })
+      .then(function(j){ if(!j.ok) throw Error(j.msg || "操作失败");
+        setTimeout(poll, opts.poll || 2000);
+        if (opts.providers) setTimeout(pollProviders, opts.providers);
+      })
       .catch(function(e){ $("st-text").textContent = e.message || "操作失败"; });
   }
 
-  $("a-patrol").addEventListener("click", function(){ act("patrol-now", this); });
+  $("a-delay").addEventListener("click", function(){ act("manual-delay", this, { poll: 6000, providers: 8000 }); });
+  $("a-sweep").addEventListener("click", function(){ act("manual-sweep", this, { poll: 50000, disable: 70000 }); });
   $("a-handoff").addEventListener("click", function(){ act("handoff-auto", this); });
   $("a-restart").addEventListener("click", function(){ act("kernel-restart", this); });
   $("a-history").addEventListener("click", function(){ showHistory(true); });

@@ -55,6 +55,7 @@ EMERGENCY_MB = float(os.environ.get("PATROL_EMERGENCY_MB", "52"))
 USAGE_PATH = EVENTS_PATH + ".usage.json"
 RUN_BYTES = 0
 EMERGENCY = False
+MANUAL = False   # 用户手动触发(面板按钮):不计入每日额度,事件标记 manual
 
 
 class BudgetExceeded(RuntimeError):
@@ -86,6 +87,8 @@ def usage():
 def charge(count):
     global RUN_BYTES
     RUN_BYTES += count
+    if MANUAL:
+        return  # 手动触发不计入每日额度(用户知情主动花费;花费仍记入事件 cost_mb 供历史展示)
     rec = usage()
     rec["bytes"] += count
     os.makedirs(os.path.dirname(USAGE_PATH), exist_ok=True)
@@ -96,6 +99,8 @@ def charge(count):
 
 
 def check_budget(count):
+    if MANUAL:
+        return  # 手动触发不受额度限制
     limit = (QUOTA_MB + (EMERGENCY_MB if EMERGENCY else 0)) * 1e6
     if usage()["bytes"] + count > limit:
         raise BudgetExceeded("今日探测预算已用尽，下次巡检继续检查连通性")
@@ -170,12 +175,12 @@ def find_socket():
     m = re.search(r"-ext-ctl-unix (.+)$", ps, re.M)
     return m.group(1).strip() if m else None
 
-def api(sock, method, path, data=None):
+def api(sock, method, path, data=None, timeout=6):
     cmd = ["curl", "-sS", "--noproxy", "*", "--unix-socket", sock, "-X", method,
-           f"http://localhost{path}", "--max-time", "6", "-w", "\n%{http_code}"]
+           f"http://localhost{path}", "--max-time", str(timeout), "-w", "\n%{http_code}"]
     if data is not None:
         cmd += ["-d", json.dumps(data)]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 4)
     try:
         body, code = r.stdout.rsplit("\n", 1)
         if r.returncode or not 200 <= int(code) < 300:
@@ -282,6 +287,64 @@ def sweep(sock, nodes):
         select(sock, original)
 
 
+def manual_run(sock, nodes, effective, pinned, kind):
+    """用户手动触发的测试(面板按钮):不计入每日额度(用户知情主动花费),
+    事件带 manual=true 供「测试历史」区分手动/自动。花费仍记入 cost_mb 展示。
+    延迟测试 = group delay API 并发测全组(近零流量,顺带刷新内核健康历史);
+    下载实测 = 全量吞吐实测,钉住态发现 1.3× 更优节点则换钉,其余维持。"""
+    global MANUAL
+    MANUAL = True
+    if kind == "delay":
+        try:
+            r = api(sock, "GET",
+                    "/group/PROXY/delay"
+                    f"?url={urllib.parse.quote('https://www.gstatic.com/generate_204', safe='')}"
+                    "&timeout=4000", timeout=10)
+        except Exception as e:
+            event("manual_delay", manual=True, error=str(e), cost_mb=0)
+            return
+        node_set = set(nodes)   # 返回里会混入 AUTO 组条目,只统计真实 provider 节点
+        alive_nodes = {short(n): d for n, d in (r or {}).items()
+                       if n in node_set and isinstance(d, (int, float)) and d > 0}
+        best = min(alive_nodes.items(), key=lambda kv: kv[1]) if alive_nodes else None
+        log(f"手动延迟测试:{len(alive_nodes)}/{len(nodes)} 节点存活"
+            + (f",最快 {best[0]} {best[1]}ms" if best else ""))
+        event("manual_delay", manual=True, alive=len(alive_nodes), total=len(nodes),
+              best=best[0] if best else "", best_ms=int(best[1]) if best else 0, cost_mb=0)
+        return
+    if kind == "sweep":
+        log("手动下载实测:全量扫描(不计入每日额度)")
+        res = sweep(sock, nodes)
+        live = {n: m for n, m in res.items() if m > 0}
+        cost = round(RUN_BYTES / 1e6, 1)
+        sweep_data = {short(n): round(m, 1) for n, m in res.items()}
+        if not live:
+            log("手动实测:所有节点都不可用")
+            event("manual_sweep", manual=True, all_dead=True,
+                  cost_mb=cost, sweep=sweep_data)
+            return
+        best = max(live, key=live.get)
+        cur = live.get(effective, 0.0)
+        if pinned and best != effective and live[best] >= max(cur * BETTER_RATIO, 5.0):
+            select(sock, best)
+            log(f"手动实测发现更优:换钉 {short(best)}({live[best]:.1f}Mbps,"
+                f"原 {short(effective)} {cur:.1f}Mbps)")
+            event("manual_sweep", manual=True, to=short(best),
+                  mbps=round(live[best], 1), cost_mb=cost, sweep=sweep_data)
+            return
+        log(f"手动实测完成:维持 {short(effective)}({cur:.1f}Mbps),"
+            f"最快 {short(best)} {live[best]:.1f}Mbps")
+        event("manual_sweep", manual=True, mbps=round(cur, 1),
+              cost_mb=cost, sweep=sweep_data)
+
+
+def main():
+    global RUN_BYTES, EMERGENCY
+    RUN_BYTES = 0
+    EMERGENCY = False
+    lock = acquire_lock()
+
+
 def main():
     global RUN_BYTES, EMERGENCY
     RUN_BYTES = 0
@@ -309,6 +372,12 @@ def main():
     effective = (proxies.get("AUTO", {}).get("now", "")
                  if cur_group == "AUTO" else cur_group)
     pinned = cur_group != "AUTO"
+
+    # 手动模式(面板按钮):只做指定动作,不计额度,不跑自动决策流
+    manual = os.environ.get("PATROL_MANUAL", "")
+    if manual:
+        return manual_run(sock, nodes, effective, pinned, manual)
+
     now = datetime.datetime.now()
     scheduled = is_sweep_hour(now)
 

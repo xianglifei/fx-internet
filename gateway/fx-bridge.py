@@ -425,10 +425,11 @@ def launchctl(*args):
     return r.returncode == 0, (r.stderr or r.stdout).strip()
 
 
-def run_patrol():
+def run_patrol(manual=None):
     """触发巡检。并发防护统一由 patrol 侧 flock 负责(桥触发与 launchd 调度共用一把锁);
     这里先非阻塞探测一次,避免明知在跑还拉起一个注定退出的进程。
-    探测到即让位(flock 随 fd 关闭释放),孤儿锁文件无害——flock 只在持有期间存在。"""
+    探测到即让位(flock 随 fd 关闭释放),孤儿锁文件无害——flock 只在持有期间存在。
+    manual="delay"/"sweep" → 用户手动触发(面板按钮):patrol 只做指定动作,不计额度。"""
     try:
         os.makedirs(STATE_DIR, exist_ok=True)
         fd = os.open(PATROL_LOCK, os.O_CREAT | os.O_RDWR, 0o644)
@@ -438,15 +439,17 @@ def run_patrol():
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         os.close(fd)
-        return False, "巡检已在运行中"
+        return False, "测试已在运行中,稍后再试"
     fcntl.flock(fd, fcntl.LOCK_UN)
     os.close(fd)
     e = dict(os.environ)
     e.update(PATROL_ENV)
+    if manual:
+        e["PATROL_MANUAL"] = manual
     subprocess.Popen([e.get("PATROL_PYTHON", sys.executable),
                       PATROL_SCRIPT], env=e,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return True, "已触发"
+    return True, {"delay": "延迟测试已触发", "sweep": "下载实测已触发(约需 1 分钟)"}.get(manual, "已触发")
 
 
 def handoff_auto():
@@ -476,6 +479,8 @@ def start_kernel(restart=False):
 
 ACTIONS = {
     "patrol-now": lambda: run_patrol(),
+    "manual-delay": lambda: run_patrol("delay"),
+    "manual-sweep": lambda: run_patrol("sweep"),
     "kernel-start": lambda: start_kernel(),
     "kernel-restart": lambda: start_kernel(restart=True),
     "handoff-auto": handoff_auto,
