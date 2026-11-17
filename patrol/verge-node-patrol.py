@@ -58,6 +58,21 @@ EMERGENCY = False
 MANUAL = False   # 用户手动触发(面板按钮):不计入每日额度,事件标记 manual
 
 
+MODE_PATH = os.environ.get(
+    "PATROL_MODE_FILE",
+    os.path.expanduser("~/Library/Application Support/fx-internet/mode.json"))
+
+
+def read_mode():
+    """选路模式:sweep=按实测(默认)/delay=按延迟/manual=按手动;桥负责写,巡检只读"""
+    try:
+        with open(MODE_PATH) as f:
+            m = json.load(f).get("mode")
+        return m if m in ("sweep", "delay", "manual") else "sweep"
+    except (OSError, ValueError):
+        return "sweep"
+
+
 class BudgetExceeded(RuntimeError):
     pass
 
@@ -343,13 +358,6 @@ def main():
     RUN_BYTES = 0
     EMERGENCY = False
     lock = acquire_lock()
-
-
-def main():
-    global RUN_BYTES, EMERGENCY
-    RUN_BYTES = 0
-    EMERGENCY = False
-    lock = acquire_lock()
     if lock is None:
         log("已有巡检在运行(桥触发/launchd 并发),本次静默退出")
         event("skip", reason="already_running", cost_mb=0)
@@ -379,7 +387,17 @@ def main():
         return manual_run(sock, nodes, effective, pinned, manual)
 
     now = datetime.datetime.now()
-    scheduled = is_sweep_hour(now)
+    scheduled = is_sweep_hour(now) or os.environ.get("PATROL_FORCE_SWEEP") == "1"
+    mode = read_mode()
+    may_switch = mode == "sweep"   # 仅「按实测」模式允许巡检自动切换出口
+
+    if mode == "delay":
+        # 按延迟模式:零实测流量。连通与节点测活免费照做;选路与故障切换全权交给
+        # 内核 url-test(健康检查自动跳过死节点),轻探测与全量实测全部停用。
+        healthy = alive() and node_alive(sock, effective) is not False
+        log("按延迟模式:连通" + ("正常,不测吞吐" if healthy else "异常,内核将自动切换节点"))
+        event("delay_ok" if healthy else "delay_down", exit=short(effective), cost_mb=0)
+        return
 
     try:
         if not alive():
@@ -437,7 +455,7 @@ def main():
             return
         best = max(live, key=live.get)
         cur = live.get(effective, 0.0)
-        if pinned and best != effective and live[best] >= max(cur * BETTER_RATIO, 5.0):
+        if may_switch and pinned and best != effective and live[best] >= max(cur * BETTER_RATIO, 5.0):
             select(sock, best)
             log(f"定时实测发现更优:换钉 {short(best)}({live[best]:.1f}Mbps,"
                 f"原 {short(effective)} {cur:.1f}Mbps)")
@@ -445,7 +463,7 @@ def main():
                   mbps=round(live[best], 1),
                   sweep={short(n): round(m, 1) for n, m in res.items()}, cost_mb=48)
         else:
-            log(f"定时实测:无显著更优节点,维持 {short(effective)}({cur:.1f}Mbps)")
+            log(f"定时实测:无显著更优节点或手动模式,维持 {short(effective)}({cur:.1f}Mbps)")
             event("keep_pin" if pinned else "keep_auto",
                   pinned=short(effective), exit=short(effective),
                   mbps=round(cur, 1),
@@ -496,15 +514,16 @@ def main():
             save_state({"good_streak": 0})
             return
         best = max(live, key=live.get)
-        if live[best] >= max(mbps * BETTER_RATIO, 5.0) and best != effective:
+        if may_switch and live[best] >= max(mbps * BETTER_RATIO, 5.0) and best != effective:
             select(sock, best)
             log(f"换钉:PROXY → {short(best)} ({live[best]:.1f}Mbps)")
             event("repin", prev=short(effective), to=short(best),
                   mbps=round(live[best], 1),
                   sweep={short(n): round(m, 1) for n, m in res.items()}, cost_mb=52)
         else:
-            select(sock, effective)
-            log("无更优节点,维持现钉节点")
+            if may_switch:
+                select(sock, effective)
+            log("无更优节点或手动模式,维持现钉节点")
             event("keep_pin", pinned=short(effective), mbps=round(mbps, 1),
                   sweep={short(n): round(m, 1) for n, m in res.items()}, cost_mb=52)
         save_state({"good_streak": 0})
@@ -517,6 +536,13 @@ def main():
         save_state(state)
         log(f"钉住节点 {short(effective)} 正常({mbps:.1f}Mbps,"
             f"连续达标 {streak}/{RETURN_AFTER})")
+        event("pin_ok", pinned=short(effective), mbps=round(mbps, 1),
+              streak=streak, total=RETURN_AFTER, cost_mb=4)
+        return
+    if not may_switch:
+        # 按手动模式:连续达标也不自动交还(出口切换权在用户)
+        save_state(state)
+        log(f"手动模式:钉住节点 {short(effective)} 正常({mbps:.1f}Mbps),维持用户选择")
         event("pin_ok", pinned=short(effective), mbps=round(mbps, 1),
               streak=streak, total=RETURN_AFTER, cost_mb=4)
         return

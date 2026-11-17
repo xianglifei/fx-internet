@@ -73,7 +73,12 @@
   .hero{ padding:10px 16px 4px; text-align:center; }
   .state{ display:inline-flex; align-items:center; justify-content:center; font-size:19px; font-weight:700; }
   .state.ok{ color:var(--ok); } .state.bad{ color:var(--bad); } .state.dim{ color:var(--dim); }
-  .herosub{ margin-top:3px; font-size:11px; color:var(--dim); font-weight:500; }
+  .herosub{ margin-top:5px; font-size:11px; color:var(--dim); font-weight:500; }
+  .seg{ margin-left:auto; display:flex; border:1px solid var(--border); border-radius:99px; background:var(--surface); overflow:hidden; flex:none; }
+  .seg button{ border:none; background:transparent; color:var(--dim); font-size:10.5px; font-weight:600; padding:4px 9px; cursor:pointer; }
+  .seg button + button{ border-left:1px solid var(--border); }
+  .seg button.on{ background:var(--accent); color:light-dark(#fff,#0b101a); }
+  .tbl.pick tbody tr{ cursor:pointer; }
 
   /* 节点总览表(常驻平铺;出口=「使用中」标记+整行高亮,唯一答案) */
   .tblwrap{ padding:10px 16px 2px; }
@@ -151,17 +156,22 @@
     <div class="strip" id="strip">
       <span class="chip" id="chip-proxy"><span class="d"></span><span id="chip-proxy-t">代理…</span></span>
       <span class="chip" id="chip-direct"><span class="d"></span><span id="chip-direct-t">直连…</span></span>
+      <div class="seg" id="mode-seg">
+        <button data-mode="delay" title="只按延迟自动挑节点,零实测流量">按延迟</button>
+        <button data-mode="sweep" title="定时实测所有节点,拥塞/故障时钉住最快">按实测</button>
+        <button data-mode="manual" title="你点谁用谁,测量照跑">按手动</button>
+      </div>
     </div>
     <div class="banner" id="banner" hidden></div>
 
     <div class="hero">
       <div class="state" id="st"><span id="st-text">连接中…</span></div>
-      <div class="herosub" id="l1-sub"></div>
+      <div class="herosub"><span id="l1-sub"></span><span class="tip" data-tip="选路规则:按延迟=内核持续挑延迟最低的节点,免费零流量;按实测=白天每 3 小时实测所有节点,拥塞/故障时钉住最快(约 48MB/次);按手动=你点谁用谁,测量照跑、切换权在你">ⓘ</span></div>
     </div>
 
     <div class="tblwrap">
       <table class="tbl">
-        <thead><tr><th>状态</th><th>节点</th><th class="c">延迟(<span id="th-health-at">—</span>)<span class="tip" data-tip="内核健康检查:每 5 分钟一轮,小请求走节点往返一圈的时间(ms),反映反应速度;通断状态也来自它">ⓘ</span></th><th>实测(<span id="th-sweep-at">—</span>)<span class="tip" data-tip="全量实测:让每个节点下载一个 8MB 测试文件,测出的持续下载速度(Mbps);拥堵/故障时或定时(白天约每 3 小时)触发">ⓘ</span></th><th class="c">标记</th></tr></thead>
+        <thead><tr><th>状态</th><th>节点</th><th class="c">延迟(<span id="th-health-at">—</span>)<span class="tip" data-tip="内核健康检查:每 5 分钟一轮,小请求走节点往返一圈的时间(ms),反映反应速度;通断状态也来自它">ⓘ</span></th><th id="th-measure">实测(<span id="th-sweep-at">—</span>)<span class="tip" data-tip="全量实测:让每个节点下载一个 8MB 测试文件,测出的持续下载速度(Mbps);拥堵/故障时或定时(白天约每 3 小时)触发">ⓘ</span></th><th class="c" id="th-mark">标记</th></tr></thead>
         <tbody id="rows"><tr><td colspan="5" class="dim" style="font-size:12px">正在获取节点…</td></tr></tbody>
       </table>
     </div>
@@ -244,7 +254,10 @@
 
     // ---- 出口与模式 ----
     var exitShort = g.pinned ? g.proxy_now_short : g.auto_now_short;
-    var modeText = g.pinned ? "巡检钉住" : "常规模式自动选优";
+    var uiMode = (s.mode || {}).mode || "sweep";
+    var modeText = uiMode === "delay" ? "按延迟自动选优"
+                 : uiMode === "manual" ? "手动模式 · 点击节点行切换"
+                 : (g.pinned ? "实测钉住最快节点" : "按实测自动选优");
 
     // ---- 状态带 chips ----
     var down = HARD_DOWN[d.reason] && d.level === "red";
@@ -281,20 +294,33 @@
     $("l1-sub").hidden = !!down;
 
     // ---- 底部按钮的条件可见性(需要时才提供) ----
-    // 恢复自动选优:仅钉住状态有意义(把出口交还回 AUTO 自动选优)
+    // 恢复自动选优:仅「按实测」模式的钉住状态有意义(把出口交还回 AUTO)
     // 重启内核:保底按钮,仅内核异常或状态失联(正常时 launchd 自管,永远用不到)
-    $("a-handoff").hidden = !(g.pinned && !down);
+    // 下载实测:「按延迟」模式下无实测,隐藏
+    $("a-sweep").hidden = uiMode === "delay";
+    $("a-handoff").hidden = !(g.pinned && !down && uiMode === "sweep");
     $("a-restart").hidden = !(d.reason === "kernel_down" || d.reason === "status_unknown");
 
-    // ---- 节点总览表(出口=「使用中」标记+整行高亮,唯一出口信息) ----
-    renderTable(g, exitShort);
+    // ---- 节点总览表(出口=「使用中」标记贴节点名后;按延迟模式下隐藏实测/标记) ----
+    var showMeasure = uiMode !== "delay";
+    $("th-measure").style.display = showMeasure ? "" : "none";
+    $("th-mark").style.display = showMeasure ? "" : "none";
+    document.querySelector(".tbl").classList.toggle("pick", uiMode === "manual");
+    renderTable(g, exitShort, showMeasure);
     var healthAt = null;
     nodes.forEach(function(n){ if (n.at && (!healthAt || n.at > healthAt)) healthAt = n.at; });
     $("th-health-at").textContent = healthAt || "—";
     $("th-sweep-at").textContent = sweepAt || "—";
     if (!$("history-view").hidden) $("h-quota").innerHTML = quotaLine(p);
+    setSeg(uiMode);
 
     postSize();
+  }
+
+  function setSeg(mode){
+    document.querySelectorAll("#mode-seg button").forEach(function(b){
+      b.classList.toggle("on", b.dataset.mode === mode);
+    });
   }
 
   function setChip(chip, txt, st, label){
@@ -312,7 +338,7 @@
     return port === "443" ? label : label + " :" + port;
   }
 
-  function renderTable(g, exitShort){
+  function renderTable(g, exitShort, showMeasure){
     var body = $("rows");
     if (!nodes.length) {
       body.innerHTML = '<tr><td colspan="5" class="dim" style="font-size:12px">正在获取节点…</td></tr>';
@@ -337,12 +363,12 @@
       var alive = !!r.n.alive;
       var isExit = r.n.short === exitShort;
       var exitMark = isExit ? '<span class="mark ' + (alive ? "use" : "down") + '">' + (alive ? "使用中" : "出口异常") + '</span>' : "";
-      var fastMark = (fastest === r && exitShort) ? '<span class="mark fast">最快</span>' : "";
-      html += "<tr class='" + (alive ? "" : "dead ") + (isExit ? "current" : "") + "'>"
+      var fastMark = (fastest === r && showMeasure) ? '<span class="mark fast">最快</span>' : "";
+      html += "<tr data-node='" + esc(r.n.short) + "' class='" + (alive ? "" : "dead ") + (isExit ? "current" : "") + "'>"
         + '<td><span class="st ' + (alive ? "ok" : "bad") + '">' + (alive ? "通" : "断") + '</span></td>'
         + '<td class="nm" title="' + esc(r.n.short) + '">' + esc(r.label) + exitMark + '</td>'
         + '<td class="c ms num">' + (alive ? (r.n.delay ? r.n.delay + "ms" : "—") : "超时") + '</td>'
-        + '<td class="num">' + (r.sv != null ? '<span class="mb">' + r.sv.toFixed(1) + ' Mbps</span>' : '<span class="ms">—</span>') + '</td>'
+        + (showMeasure ? '<td class="num">' + (r.sv != null ? '<span class="mb">' + r.sv.toFixed(1) + ' Mbps</span>' : '<span class="ms">—</span>') + '</td>' : "")
         + '<td class="c">' + fastMark + '</td></tr>';
     });
     body.innerHTML = html;
@@ -466,12 +492,54 @@
       .catch(function(e){ $("st-text").textContent = e.message || "操作失败"; });
   }
 
+  // 三选一选路模式:点击即切换,立即生效(按实测会触发一次全量实测)
+  document.querySelectorAll("#mode-seg button").forEach(function(b){
+    b.addEventListener("click", function(){
+      if (b.classList.contains("on")) return;
+      var body = {};
+      if (b.dataset.mode === "manual" && last && last.groups) {
+        var cur = last.groups.pinned ? last.groups.proxy_now : last.groups.auto_now;
+        var full = (nodes.filter(function(n){ return n.short === cur; })[0] || {}).name;
+        if (full) body.node = full;
+      }
+      btn = b;
+      btn.disabled = true;
+      fetch("/api/token").then(function(r){ return r.json(); })
+        .then(function(auth){ return fetch("/api/actions/set-mode-" + b.dataset.mode, {
+            method: "POST",
+            headers: {"X-FX-Token": auth.token, "Content-Type": "application/json"},
+            body: JSON.stringify(body) }); })
+        .then(function(r){ return r.json(); })
+        .then(function(j){ btn.disabled = false; setTimeout(poll, 1500);
+          if (!j.ok) $("st-text").textContent = j.msg || "切换失败"; })
+        .catch(function(){ btn.disabled = false; });
+    });
+  });
+
   $("a-delay").addEventListener("click", function(){ act("manual-delay", this, { poll: 6000, providers: 8000 }); });
   $("a-sweep").addEventListener("click", function(){ act("manual-sweep", this, { poll: 50000, disable: 70000 }); });
   $("a-handoff").addEventListener("click", function(){ act("handoff-auto", this); });
   $("a-restart").addEventListener("click", function(){ act("kernel-restart", this); });
   $("a-history").addEventListener("click", function(){ showHistory(true); });
   $("a-back").addEventListener("click", function(){ showHistory(false); });
+
+  // 按手动模式:点击节点行切换出口(死亡行除外)
+  $("rows").addEventListener("click", function(ev){
+    if (!last || (last.mode || {}).mode !== "manual") return;
+    var tr = ev.target.closest("tr");
+    var nodeName = tr && tr.getAttribute("data-node");
+    if (!nodeName || tr.classList.contains("dead")) return;
+    var full = (nodes.filter(function(n){ return n.short === nodeName; })[0] || {}).name;
+    if (!full) return;
+    fetch("/api/token").then(function(r){ return r.json(); })
+      .then(function(auth){ return fetch("/api/actions/select-node", {
+          method: "POST",
+          headers: {"X-FX-Token": auth.token, "Content-Type": "application/json"},
+          body: JSON.stringify({node: full}) }); })
+      .then(function(r){ return r.json(); })
+      .then(function(j){ setTimeout(poll, 1500); if (!j.ok) $("st-text").textContent = j.msg || "切换失败"; })
+      .catch(function(){});
+  });
 
   poll();
   pollProviders();

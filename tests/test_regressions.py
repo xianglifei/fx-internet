@@ -223,7 +223,10 @@ class Regressions(unittest.TestCase):
         self.assertNotIn('a-patrol', ui)
         for needle in ('id="a-delay">延迟测试', 'id="a-sweep">下载实测',
                        'id="a-history">测试历史', 'manual-delay', 'manual-sweep',
-                       '手动 · ', '手动实测不计入额度'):
+                       '手动 · ', '手动实测不计入额度',
+                       'mode-seg', 'data-mode="delay"', 'data-mode="sweep"',
+                       'data-mode="manual"', 'select-node', 'th-measure', 'th-mark',
+                       '/api/actions/set-mode-'):
             self.assertIn(needle, ui)
         # 菜单栏 App 页面自更新契约(版本占位符由桥注入)
         self.assertIn('__UI_VERSION__', ui)

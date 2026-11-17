@@ -411,6 +411,7 @@ def build_status():
         "patrol": {"last_event": last, "events": events[-20:],
                    "cost_today_mb": round(cost_today, 2), "quota_mb": QUOTA_MB,
                    "next_run": next_patrol_time()},
+        "mode": read_mode_state(),
         "direct": {"ok": DIRECT.get("ok"), "checked_at": (
             f"{datetime.datetime.fromtimestamp(DIRECT['ts']):%H:%M:%S}"
             if DIRECT.get("ts") else None)},
@@ -425,11 +426,12 @@ def launchctl(*args):
     return r.returncode == 0, (r.stderr or r.stdout).strip()
 
 
-def run_patrol(manual=None):
+def run_patrol(manual=None, extra_env=None):
     """触发巡检。并发防护统一由 patrol 侧 flock 负责(桥触发与 launchd 调度共用一把锁);
     这里先非阻塞探测一次,避免明知在跑还拉起一个注定退出的进程。
     探测到即让位(flock 随 fd 关闭释放),孤儿锁文件无害——flock 只在持有期间存在。
-    manual="delay"/"sweep" → 用户手动触发(面板按钮):patrol 只做指定动作,不计额度。"""
+    manual="delay"/"sweep" → 用户手动触发(面板按钮):patrol 只做指定动作,不计额度;
+    extra_env → 附加环境变量(如 PATROL_FORCE_SWEEP=1 让切换模式后立即全量实测)。"""
     try:
         os.makedirs(STATE_DIR, exist_ok=True)
         fd = os.open(PATROL_LOCK, os.O_CREAT | os.O_RDWR, 0o644)
@@ -446,10 +448,93 @@ def run_patrol(manual=None):
     e.update(PATROL_ENV)
     if manual:
         e["PATROL_MANUAL"] = manual
+    if extra_env:
+        e.update(extra_env)
     subprocess.Popen([e.get("PATROL_PYTHON", sys.executable),
                       PATROL_SCRIPT], env=e,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return True, {"delay": "延迟测试已触发", "sweep": "下载实测已触发(约需 1 分钟)"}.get(manual, "已触发")
+
+
+MODE_PATH = os.path.join(STATE_DIR, "mode.json")
+MODES = ("delay", "sweep", "manual")
+
+
+def read_mode_state():
+    """选路模式:sweep=按实测(默认)/delay=按延迟/manual=按手动;文件由桥写、巡检读"""
+    try:
+        with open(MODE_PATH) as f:
+            d = json.load(f)
+        if d.get("mode") in MODES:
+            return d
+    except (OSError, ValueError):
+        pass
+    return {"mode": "sweep", "node": None}
+
+
+def write_mode(mode, node=None):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = MODE_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"mode": mode, "node": node,
+                   "ts": datetime.datetime.now().isoformat(timespec="seconds")}, f)
+    os.replace(tmp, MODE_PATH)
+
+
+def set_mode(mode, body=None, force_sweep=False):
+    """切换选路模式并立即落到内核路由:
+    delay → 交还 AUTO(交还后内核按延迟持续自动选优);
+    sweep → 触发一次全量实测(新额度内,允许自动换节点),让「实测」列立即新鲜;
+    manual → 选定节点(默认当前出口),之后切换权在用户,巡检只测不切。"""
+    node = (body or {}).get("node")
+    all_nodes = (MON.get("proxies", {}).get("PROXY", {}) or {}).get("all", [])
+    if node and node not in all_nodes:
+        return False, "未知节点:" + short(node)
+    cur = (MON.get("proxies", {}).get("PROXY", {}) or {}).get("now", "")
+    if mode == "delay":
+        write_mode("delay")
+        if cur != "AUTO":
+            handoff_auto()
+        return True, "已切换:按延迟自动选优(实测已停用)"
+    if mode == "sweep":
+        write_mode("sweep", node=None)
+        if cur != "AUTO":
+            try:
+                handoff_auto()
+            except (RuntimeError, OSError):
+                pass
+        run_patrol(extra_env={"PATROL_FORCE_SWEEP": "1"})
+        return True, "已切换:按实测自动选优,正在全量实测…"
+    if not node:
+        node = cur if cur != "AUTO" else (MON.get("proxies", {}).get("AUTO", {}) or {}).get("now", "")
+    if not node:
+        return False, "没有可指定的节点"
+    write_mode("manual", node=node)
+    try:
+        mi("PUT", "/proxies/PROXY", {"name": node})
+        if mi("GET", "/proxies/PROXY").get("now") != node:
+            raise RuntimeError("切换验证失败")
+    except RuntimeError as e:
+        return False, "切换失败:" + str(e)
+    return True, "已切换:按手动模式,当前节点 " + short(node)
+
+
+def select_node(body):
+    """按手动模式:用户点节点行切换出口。仅 manual 模式可用。"""
+    if read_mode_state().get("mode") != "manual":
+        return False, "请先切换到「按手动」模式"
+    node = (body or {}).get("node")
+    all_nodes = (MON.get("proxies", {}).get("PROXY", {}) or {}).get("all", [])
+    if not node or node not in all_nodes:
+        return False, "未知节点"
+    write_mode("manual", node=node)
+    try:
+        mi("PUT", "/proxies/PROXY", {"name": node})
+        if mi("GET", "/proxies/PROXY").get("now") != node:
+            raise RuntimeError("切换验证失败")
+    except RuntimeError as e:
+        return False, "切换失败:" + str(e)
+    return True, "已切换到 " + short(node)
 
 
 def handoff_auto():
@@ -478,12 +563,16 @@ def start_kernel(restart=False):
 
 
 ACTIONS = {
-    "patrol-now": lambda: run_patrol(),
-    "manual-delay": lambda: run_patrol("delay"),
-    "manual-sweep": lambda: run_patrol("sweep"),
-    "kernel-start": lambda: start_kernel(),
-    "kernel-restart": lambda: start_kernel(restart=True),
-    "handoff-auto": handoff_auto,
+    "patrol-now": lambda b: run_patrol(),
+    "manual-delay": lambda b: run_patrol("delay"),
+    "manual-sweep": lambda b: run_patrol("sweep"),
+    "set-mode-delay": lambda b: set_mode("delay", b),
+    "set-mode-sweep": lambda b: set_mode("sweep", b, force_sweep=True),
+    "set-mode-manual": lambda b: set_mode("manual", b),
+    "select-node": lambda b: select_node(b),
+    "kernel-start": lambda b: start_kernel(),
+    "kernel-restart": lambda b: start_kernel(restart=True),
+    "handoff-auto": lambda b: handoff_auto(),
 }
 
 
@@ -594,11 +683,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "write authorization required"}, 403)
         if self.path.startswith("/api/actions/"):
             name = self.path.rsplit("/", 1)[-1]
+            body = {}
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                if 0 < length <= 65536:
+                    body = json.loads(self.rfile.read(length) or b"{}")
+                    if not isinstance(body, dict):
+                        body = {}
+            except (ValueError, OSError):
+                body = {}
             try:
                 if name == "kernel-stop":
                     ok, msg = do_kernel_stop()
                 elif name in ACTIONS:
-                    ok, msg = ACTIONS[name]()
+                    ok, msg = ACTIONS[name](body)
                 else:
                     return self._json({"error": "unknown action"}, 404)
                 self._json({"ok": bool(ok), "msg": str(msg)}, 200 if ok else 503)
