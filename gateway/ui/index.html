@@ -69,14 +69,11 @@
   }
   .banner b{ color:var(--text); }
 
-  /* 主区:一句结论(+选路模式),整体居中 */
-  .hero{ padding:12px 16px 10px; text-align:center; }
-  .state{ display:inline-flex; align-items:center; justify-content:center; gap:9px; font-size:19px; font-weight:700; }
-  .lamp{ width:12px; height:12px; border-radius:99px; flex:none; background:var(--dim); }
-  .lamp.ok{ background:var(--ok); box-shadow:0 0 0 4px color-mix(in srgb,var(--ok) 16%,transparent); }
-  .lamp.bad{ background:var(--bad); box-shadow:0 0 0 4px color-mix(in srgb,var(--bad) 16%,transparent); }
+  /* 主区:一句结论(+选路模式),整体居中;彩色结论文字自身承载状态,不再放状态灯 */
+  .hero{ padding:10px 16px 4px; text-align:center; }
+  .state{ display:inline-flex; align-items:center; justify-content:center; font-size:19px; font-weight:700; }
   .state.ok{ color:var(--ok); } .state.bad{ color:var(--bad); } .state.dim{ color:var(--dim); }
-  .herosub{ margin-top:5px; font-size:11px; color:var(--dim); font-weight:500; }
+  .herosub{ margin-top:3px; font-size:11px; color:var(--dim); font-weight:500; }
 
   /* 节点总览表(常驻平铺;出口=「使用中」标记+整行高亮,唯一答案) */
   .tblwrap{ padding:10px 16px 2px; }
@@ -109,12 +106,8 @@
   .st.bad{ color:var(--bad); } .st.bad::before{ background:var(--bad); }
   .nm{ font-weight:500; white-space:nowrap; }
   .ms{ color:var(--dim); white-space:nowrap; }
-  .cellbar{ display:flex; align-items:center; gap:6px; }
-  .rowbar{ position:relative; width:72px; height:5px; border-radius:99px; background:var(--track); overflow:hidden; flex:none; }
-  .rowbar i{ position:absolute; inset:0 auto 0 0; border-radius:99px; background:var(--ok); }
-  .mb{ font-weight:600; white-space:nowrap; }
+  .mb{ white-space:nowrap; }
   tr.dead .nm,tr.dead .ms,tr.dead .mb{ color:var(--bad); }
-  tr.dead .rowbar i{ background:var(--bad); }
   tr.current td{ background:color-mix(in srgb,var(--accent) 6%,transparent); }
   .mark{ font-size:10px; padding:2px 7px; border-radius:99px; white-space:nowrap; }
   .mark.use{ background:color-mix(in srgb,var(--accent) 14%,transparent); color:var(--accent); font-weight:600; }
@@ -161,7 +154,7 @@
     <div class="banner" id="banner" hidden></div>
 
     <div class="hero">
-      <div class="state" id="st"><span class="lamp" id="lamp"></span><span id="st-text">连接中…</span></div>
+      <div class="state" id="st"><span id="st-text">连接中…</span></div>
       <div class="herosub" id="l1-sub"></div>
     </div>
 
@@ -283,7 +276,6 @@
     else { stText = "网络正常"; stCls = "ok"; }
     $("st-text").textContent = stText;
     $("st").className = "state " + stCls;
-    $("lamp").className = "lamp " + stCls;
     $("l1-sub").textContent = down ? "" : modeText;
     $("l1-sub").hidden = !!down;
 
@@ -350,9 +342,7 @@
         + '<td><span class="st ' + (alive ? "ok" : "bad") + '">' + (alive ? "通" : "断") + '</span></td>'
         + '<td class="nm" title="' + esc(r.n.short) + '">' + esc(r.label) + '</td>'
         + '<td class="c ms num">' + (alive ? (r.n.delay ? r.n.delay + "ms" : "—") : "超时") + '</td>'
-        + '<td><div class="cellbar">'
-        + (r.sv != null ? '<div class="rowbar"><i style="width:' + Math.max(r.sv/maxv*100, 2) + '%"></i></div><span class="mb num">' + r.sv.toFixed(1) + ' Mbps</span>' : '<span class="ms">—</span>')
-        + '</div></td>'
+        + '<td class="num">' + (r.sv != null ? '<span class="mb">' + r.sv.toFixed(1) + ' Mbps</span>' : '<span class="ms">—</span>') + '</td>'
         + '<td class="c">' + marks + '</td></tr>';
     });
     body.innerHTML = html;
@@ -440,7 +430,7 @@
     fetch("/api/status").then(function(r){ return r.json(); }).then(render)
       .catch(function(){
         $("st-text").textContent = "桥接服务未响应";
-        $("st").className = "state bad"; $("lamp").className = "lamp bad";
+        $("st").className = "state bad";
         postSize();
       });
   }
