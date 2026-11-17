@@ -88,6 +88,10 @@ final class PanelController: NSObject, WKScriptMessageHandler, WKNavigationDeleg
             return
         }
         NSApp.activate(ignoringOtherApps: true)
+        // 页面常驻不重载(避免闪白);但 App Nap 会挂起页面定时器,纯页面自查可能
+        // 滞留旧版——打开面板的瞬间由原生侧触发一次版本自查,页面过期即自行刷新
+        Task { try? await web.evaluateJavaScript(
+            "window.__fxCheckUiVersion && window.__fxCheckUiVersion()") }
         if let button = statusItem.button {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }

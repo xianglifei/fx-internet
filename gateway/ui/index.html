@@ -192,6 +192,9 @@
     if (!document.hidden) checkUiVersion();
   });
   checkUiVersion();
+  // 供菜单栏 App 原生侧在打开面板瞬间调用(evaluateJavaScript)——App Nap 挂起期间
+  // 页面定时器不跑,原生触发是打开即新的最后保障
+  window.__fxCheckUiVersion = checkUiVersion;
 
   // 嵌入菜单栏 popover(WKWebView)时:贴合气泡、把窗口尺寸实时报给原生侧
   var embedded = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.panelSize);
