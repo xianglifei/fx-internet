@@ -222,6 +222,18 @@ class Regressions(unittest.TestCase):
         # 菜单栏 App 页面自更新契约(版本占位符由桥注入)
         self.assertIn('__UI_VERSION__', ui)
 
+    def test_quiet_and_sweep_hours(self):
+        # 夜间 0-7 点只查连通不测吞吐;白天 8/11/14/17/20/23 点定时全量实测
+        for h in range(0, 8):
+            self.assertTrue(p.is_quiet_hour(datetime.datetime(2026, 11, 18, h, 10)))
+            self.assertFalse(p.is_sweep_hour(datetime.datetime(2026, 11, 18, h, 10)))
+        for h in (8, 11, 14, 17, 20, 23):
+            self.assertFalse(p.is_quiet_hour(datetime.datetime(2026, 11, 17, h, 10)))
+            self.assertTrue(p.is_sweep_hour(datetime.datetime(2026, 11, 17, h, 10)))
+        for h in (9, 10, 12, 13, 15, 16, 18, 19, 21, 22):
+            self.assertFalse(p.is_quiet_hour(datetime.datetime(2026, 11, 17, h, 10)))
+            self.assertFalse(p.is_sweep_hour(datetime.datetime(2026, 11, 17, h, 10)))
+
 
 if __name__ == '__main__':
     unittest.main()

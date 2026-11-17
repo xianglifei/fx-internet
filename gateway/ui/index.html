@@ -8,7 +8,7 @@
   /* 方案B v5「节点总览表·去重平铺版」:
      - 出口信息只在节点表一处("使用中"标记 + 整行高亮);状态带只剩两个连通 chip
      - 直连卡删除(顶部"直连通"chip 已足够)
-     - 机制细节(测速额度/花费)收进「测速历史」子页,主视图零机制噪音
+     - 机制细节(实测额度/花费)收进「实测历史」子页,主视图零机制噪音
      宽度自适应:卡片 max-content 定宽,460~720 限幅;文本块限宽换行不撑宽卡片。
      尺寸反馈环安全:宽度不依赖视口,panelSize 上报后弹窗贴合,无死锁。 */
   :root{ color-scheme: light dark; }
@@ -118,7 +118,7 @@
   .foot{ display:flex; align-items:center; gap:4px; padding:8px 10px 12px; border-top:1px solid var(--border); }
   .foot .push{ margin-left:auto; }
 
-  /* 测速历史子页(同窗切换;按时间倒序,最近在最上) */
+  /* 实测历史子页(同窗切换;按时间倒序,最近在最上) */
   .h-head{
     display:flex; align-items:center; gap:8px; padding:10px 16px;
     background:var(--surface2); border-bottom:1px solid var(--border); font-size:13px; font-weight:600;
@@ -152,7 +152,7 @@
 
     <div class="tblwrap">
       <table class="tbl">
-        <thead><tr><th>状态</th><th>节点</th><th class="r">延迟</th><th>实测(<span id="th-sweep-at">—</span>)</th><th class="r">标记</th></tr></thead>
+        <thead><tr><th>状态</th><th>节点</th><th class="r">延迟(<span id="th-health-at">—</span>)</th><th>实测(<span id="th-sweep-at">—</span>)</th><th class="r">标记</th></tr></thead>
         <tbody id="rows"><tr><td colspan="5" class="dim" style="font-size:12px">正在获取节点…</td></tr></tbody>
       </table>
       <div class="tbl-note" id="tbl-note"></div>
@@ -161,13 +161,13 @@
     <div class="foot">
       <button class="btn ghost" id="a-patrol">立即巡检</button>
       <button class="btn ghost" id="a-handoff" hidden>恢复自动选优</button>
-      <button class="btn ghost push" id="a-history">测速历史</button>
+      <button class="btn ghost push" id="a-history">实测历史</button>
       <button class="btn ghost" id="a-restart" hidden>重启内核</button>
     </div>
   </div>
 
   <div id="history-view" hidden>
-    <div class="h-head"><button class="btn ghost" id="a-back">‹ 返回</button><span>测速历史</span></div>
+    <div class="h-head"><button class="btn ghost" id="a-back">‹ 返回</button><span>实测历史</span></div>
     <div class="h-quota" id="h-quota"></div>
     <div class="h-list" id="h-list"><div class="h-row dim">加载中…</div></div>
   </div>
@@ -279,8 +279,12 @@
 
     // ---- 节点总览表(出口=「使用中」标记+整行高亮,唯一出口信息) ----
     renderTable(g, exitShort);
+    var healthAt = null;
+    nodes.forEach(function(n){ if (n.at && (!healthAt || n.at > healthAt)) healthAt = n.at; });
+    $("th-health-at").textContent = healthAt || "—";
     $("th-sweep-at").textContent = sweepAt || "—";
     $("tbl-note").textContent = tableNote();
+    if (!$("history-view").hidden) $("h-quota").innerHTML = quotaLine(p);
 
     postSize();
   }
@@ -340,15 +344,11 @@
   }
 
   function tableNote(){
-    var healthAt = null;
-    nodes.forEach(function(n){ if (n.at && (!healthAt || n.at > healthAt)) healthAt = n.at; });
-    var parts = [];
-    parts.push("通断/延迟 = 健康检查" + (healthAt ? "(测于 " + healthAt + ")" : "(每 5 分钟一轮)"));
-    parts.push(sweepAt ? "实测 = 最近全量测速(" + sweepAt + "),拥堵/故障时才触发" : "实测 = 等待巡检(拥堵/故障时触发,或点「立即巡检」)");
-    return parts.join(" · ");
+    return "通断/延迟 = 内核健康检查,每 5 分钟一轮 · 实测 = 所有节点逐个测吞吐,"
+         + "拥堵/故障时或定时(白天约每 3 小时)触发";
   }
 
-  // ---- 测速历史子页 ----
+  // ---- 实测历史子页 ----
   function showHistory(on){
     $("main-view").hidden = on;
     $("history-view").hidden = !on;
@@ -358,9 +358,9 @@
 
   var EV_TYPE = {
     steady_ok:"轻探测", pin_ok:"轻探测", keep_pin:"轻探测", keep_auto:"轻探测",
-    congestion_pin:"全量测速", fault_switch:"全量测速", repin:"全量测速",
-    handoff:"交还自动", all_dead:"全量测速", budget_exhausted:"省流量模式",
-    error:"巡检异常", skip:"跳过"
+    congestion_pin:"全量实测", fault_switch:"全量实测", repin:"全量实测",
+    handoff:"交还自动", all_dead:"全量实测", budget_exhausted:"省流量模式",
+    night_ok:"夜间静默", error:"巡检异常", skip:"跳过"
   };
 
   function evSummary(e){
@@ -377,6 +377,7 @@
       case "keep_auto": return "保持常规模式,无更优节点";
       case "all_dead": return "全部节点失联,持续重试中";
       case "budget_exhausted": return "额度用尽,只做连通检查";
+      case "night_ok": return "连通正常,夜间未测吞吐";
       case "handoff": return "交还常规模式自动选优";
       case "error": return "异常:" + (e.error || "");
       case "skip": return "跳过(" + (e.reason || "") + ")";
@@ -384,13 +385,14 @@
     }
   }
 
-  function renderHistory(){
-    var p = last ? last.patrol : {};
-    var q = $("h-quota");
+  function quotaLine(p){
     var qhtml = "今日已用 <b class='num'>" + esc(p.cost_today_mb != null ? p.cost_today_mb : "…") + "</b> / <b class='num'>" + esc(p.quota_mb != null ? p.quota_mb : "…") + "</b> MB";
     if (p.last_event && p.last_event.type === "budget_exhausted") qhtml += " · 已用完——<b>只影响测速排名,联网不受影响</b>,明早 00:00 自动恢复";
-    qhtml += " · 全量测速约 25 MB/次,轻探测约 4 MB/次 · 下次巡检 " + esc(p.next_run || "…");
-    q.innerHTML = qhtml;
+    return qhtml + " · 全量实测约 48 MB/次,轻探测约 4 MB/次,夜间 0-7 点只查连通 · 下次巡检 " + esc(p.next_run || "…");
+  }
+
+  function renderHistory(){
+    $("h-quota").innerHTML = quotaLine(last ? last.patrol : {});
 
     var list = $("h-list");
     list.innerHTML = '<div class="h-row dim">加载中…</div>';
@@ -399,7 +401,7 @@
       if (!evs.length) { list.innerHTML = '<div class="h-row dim">暂无记录</div>'; return; }
       var html = "";
       evs.forEach(function(e){
-        var type = EV_TYPE[e.type] || e.type;
+        var type = e.sweep ? "全量实测" : (EV_TYPE[e.type] || e.type);
         html += "<div class='h-row'>"
           + "<span class='h-t num'>" + esc((e.ts || "").slice(5, 16)) + "</span>"
           + "<span class='h-type " + (e.type === "all_dead" || e.type === "error" ? "" : "dim") + "'>" + esc(type) + "</span>"

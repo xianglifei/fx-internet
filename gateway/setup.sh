@@ -15,7 +15,7 @@ UID_N=$(id -u)
 
 PORT=7898; SYSAPPLY=0
 if [[ "${1:-}" == "--prod" ]]; then PORT=7897; SYSAPPLY=1; fi
-QUOTA="${FX_QUOTA_MB:-250}"            # 每日探测流量配额(桥展示口径)
+QUOTA="${FX_QUOTA_MB:-300}"            # 每日探测流量配额(桥展示口径)
 PATROL_MINUTE="${FX_PATROL_MINUTE:-10}"  # 巡检调度分钟,需与 patrol plist 保持一致
 
 # python3:FX_PYTHON 可指定;否则优先 homebrew(本机),回退系统 CLT(全新机器)

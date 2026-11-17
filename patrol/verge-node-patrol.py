@@ -45,7 +45,12 @@ PATROL_LOCK = os.environ.get(
         "~/Library/Application Support/fx-internet/patrol.lock"))
 NODE_FILTER = os.environ.get("PATROL_NODE_FILTER", "JMS")
 
-QUOTA_MB = float(os.environ.get("PATROL_QUOTA_MB", "250"))
+# 实测调度(2026-11-17):夜间静默不测吞吐(应急故障扫描不受影响),
+# 白天在 SWEEP_HOURS 的整点巡检做定时全量实测(约每 3 小时,保证面板「实测」新鲜)
+QUIET_HOURS = set(range(0, 8))         # 00:00-07:59 只查连通,不测吞吐
+SWEEP_HOURS = {8, 11, 14, 17, 20, 23}  # 定时全量实测的小时(白天约每 3 小时)
+
+QUOTA_MB = float(os.environ.get("PATROL_QUOTA_MB", "300"))
 EMERGENCY_MB = float(os.environ.get("PATROL_EMERGENCY_MB", "52"))
 USAGE_PATH = EVENTS_PATH + ".usage.json"
 RUN_BYTES = 0
@@ -54,6 +59,16 @@ EMERGENCY = False
 
 class BudgetExceeded(RuntimeError):
     pass
+
+
+def is_quiet_hour(now=None):
+    """夜间静默(00:00-07:59):只查连通,不测吞吐"""
+    return (now or datetime.datetime.now()).hour in QUIET_HOURS
+
+
+def is_sweep_hour(now=None):
+    """定时全量实测的小时(白天约每 3 小时)"""
+    return (now or datetime.datetime.now()).hour in SWEEP_HOURS
 
 
 def usage():
@@ -294,6 +309,8 @@ def main():
     effective = (proxies.get("AUTO", {}).get("now", "")
                  if cur_group == "AUTO" else cur_group)
     pinned = cur_group != "AUTO"
+    now = datetime.datetime.now()
+    scheduled = is_sweep_hour(now)
 
     try:
         if not alive():
@@ -307,6 +324,14 @@ def main():
             EMERGENCY = True
             ok, mbps = False, 0.0
             log(f"出口节点 {short(effective) or '?'} 全组测活未命中(死亡),立即全量扫描")
+        elif is_quiet_hour(now):
+            # 夜间静默:连通与节点测活均正常,不测吞吐(省流量;故障应急扫描不受影响)
+            log(f"夜间静默({now.hour} 点):连通正常,跳过吞吐测量")
+            event("night_ok", exit=short(effective), cost_mb=0)
+            return
+        elif scheduled:
+            # 定时全量实测:跳过轻探测,直接全量(sweep 自含当前出口)
+            ok, mbps = True, 0.0
         else:
             ok, mbps = measure(PROBE_BYTES)
     except BudgetExceeded as e:
@@ -328,6 +353,34 @@ def main():
         event("fault_switch", prev=short(effective), to=short(best),
               mbps=round(live[best], 1), sweep={short(n): round(m, 1) for n, m in res.items()},
               cost_mb=52)
+        save_state({"good_streak": 0})
+        return
+
+    if scheduled:
+        # 定时全量实测:所有节点各测一次,有显著更优(钉住态)才切换,否则维持现状
+        log(f"定时全量实测({now.hour} 点)")
+        res = sweep(sock, nodes)
+        live = {n: m for n, m in res.items() if m > 0}
+        if not live:
+            log("所有节点都不可用!")
+            event("all_dead", prev=short(effective), cost_mb=8)
+            save_state({"good_streak": 0})
+            return
+        best = max(live, key=live.get)
+        cur = live.get(effective, 0.0)
+        if pinned and best != effective and live[best] >= max(cur * BETTER_RATIO, 5.0):
+            select(sock, best)
+            log(f"定时实测发现更优:换钉 {short(best)}({live[best]:.1f}Mbps,"
+                f"原 {short(effective)} {cur:.1f}Mbps)")
+            event("repin", prev=short(effective), to=short(best),
+                  mbps=round(live[best], 1),
+                  sweep={short(n): round(m, 1) for n, m in res.items()}, cost_mb=48)
+        else:
+            log(f"定时实测:无显著更优节点,维持 {short(effective)}({cur:.1f}Mbps)")
+            event("keep_pin" if pinned else "keep_auto",
+                  pinned=short(effective), exit=short(effective),
+                  mbps=round(cur, 1),
+                  sweep={short(n): round(m, 1) for n, m in res.items()}, cost_mb=48)
         save_state({"good_streak": 0})
         return
 
