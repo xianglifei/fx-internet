@@ -85,10 +85,12 @@ class Regressions(unittest.TestCase):
                     pass
                 self.assertEqual(selected[-1], 'AUTO')
 
-    def test_measure_rejects_speed_service_failure(self):
+    def test_measure_reports_speed_service_failure(self):
+        # ac07fb4 起:测速失败返回 (False, 0.0) 而非抛异常——抛异常会被外层兜底
+        # 吞掉并以"保留原出口"收场,应急换节点分支走不到(2026-11-08 死节点悬置
+        # 4 小时的根因)。
         with patch.object(p, 'alive', return_value=True), patch.object(p, 'check_budget'), patch.object(p, 'curl_measure', return_value=('503', 10000000)):
-            with self.assertRaises(RuntimeError):
-                p.measure(4000000)
+            self.assertEqual(p.measure(4000000), (False, 0.0))
 
     def test_partial_and_failed_download_are_charged_but_rejected(self):
         for code, output in [(0, '503 10000 200'), (28, '200 10000 200'), (0, '200 10000 200')]:

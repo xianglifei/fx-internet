@@ -72,3 +72,7 @@ cp patrol/verge-node-patrol.py ~/.local/bin/verge-node-patrol.py
 2. 代理通但慢 → 看巡检日志当前钉的节点,手动跑一次巡检触发全量扫描
 3. API 无响应 → `ps aux | grep verge-mihomo` 确认内核在跑;socket 路径是动态的,每次重新从 ps 取
 4. 节点全挂 → JMS 服务商问题(查订阅能否手动 curl 通、账号流量是否耗尽)
+5. 节点全挂且长时间不自愈 → 查内核日志有无 `Provider JMS pull error`:订阅拉取若经
+   PROXY 组出去,全节点失联时订阅也拉不到,旧节点 IP 永不更新(2026-11-17 事故)。
+   处置:直连 curl 订阅覆盖 `…/fx-internet/providers/jms-sub.yaml` 后重启内核;
+   `clash/profile.yaml.template` 已加 `proxy: DIRECT`,重跑 build-config 后不会再发生

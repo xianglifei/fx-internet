@@ -28,6 +28,9 @@ proxy-providers:
     type: http
     url: "__SUB_URL__"
     interval: 1800
+    # 订阅拉取必须直连:默认走本机规则时,订阅会经 PROXY 组出去——全部节点
+    # 一旦失联,订阅也拉不到,旧 IP 永不更新,系统无法自愈(2026-11-17 事故)
+    proxy: DIRECT
     path: ./providers/jms-sub.yaml
     health-check:
       enable: true
