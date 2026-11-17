@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案B v3 — 节点总览表:一张表回答所有问题</title>
+<style>
+  :root{ color-scheme: light dark; }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; padding:24px 16px 48px;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    background:light-dark(#e9edf3,#0b101a); color:light-dark(#1b2334,#e7edf6);
+    --surface:light-dark(#ffffff,#121927); --surface2:light-dark(#f3f5f9,#1a2333);
+    --track:light-dark(#e6eaf1,#1f2937); --border:light-dark(#dde3ec,#243145);
+    --text:light-dark(#1b2334,#e7edf6); --dim:light-dark(#5f6d84,#8fa0b8);
+    --accent:light-dark(#3457ff,#7d95ff);
+    --ok:light-dark(#15803d,#3ecf8e); --warn:light-dark(#b45309,#f2b13d); --bad:light-dark(#c2364a,#f3717f);
+  }
+  .num{ font-variant-numeric:tabular-nums; }
+  .dim{ color:var(--dim); }
+  h1{ font-size:16px; margin:0 0 4px; }
+  .lede{ font-size:12.5px; color:var(--dim); margin:0 0 20px; line-height:1.6; }
+  .row{ display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start; }
+  .col{ max-width:400px; }
+  .cap{ font-size:12px; font-weight:600; color:var(--dim); margin:0 0 8px; letter-spacing:.3px; }
+
+  .win{
+    width:400px; border:1px solid var(--border); border-radius:14px; background:var(--surface); overflow:hidden;
+    box-shadow:light-dark(0 1px 3px rgba(15,23,42,.06),0 1px 3px rgba(0,0,0,.45));
+  }
+
+  /* 顶部状态带:一行说完两个核心问题 + 当前出口 */
+  .strip{
+    display:flex; align-items:center; gap:6px; padding:10px 14px; background:var(--surface2);
+    border-bottom:1px solid var(--border); font-size:12px; font-weight:600;
+  }
+  .chip{ display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:99px; border:1px solid var(--border); background:var(--surface); font-weight:600; }
+  .chip .d{ width:7px; height:7px; border-radius:99px; }
+  .chip.ok .d{ background:var(--ok); } .chip.bad .d{ background:var(--bad); }
+  .chip.ok{ color:var(--ok); } .chip.bad{ color:var(--bad); border-color:color-mix(in srgb,var(--bad) 40%,var(--border)); }
+  .strip .exit{ margin-left:auto; font-size:11px; font-weight:500; color:var(--dim); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .strip .exit b{ color:var(--text); font-weight:600; }
+
+  /* 断网横幅:代理不通时才出现,替代状态带 */
+  .banner{ padding:12px 14px; background:color-mix(in srgb,var(--bad) 10%,var(--surface2)); border-bottom:1px solid color-mix(in srgb,var(--bad) 30%,var(--border)); }
+  .banner .t{ font-size:15px; font-weight:700; color:var(--bad); display:flex; align-items:center; gap:8px; }
+  .banner .t::before{ content:''; width:10px; height:10px; border-radius:99px; background:var(--bad); box-shadow:0 0 0 4px color-mix(in srgb,var(--bad) 16%,transparent); }
+  .banner .s{ font-size:11.5px; color:var(--dim); margin-top:5px; line-height:1.55; }
+  .banner .s b{ color:var(--text); }
+
+  .body{ padding:12px 14px 10px; }
+
+  /* 主角:节点总览表 */
+  .tbl{ width:100%; border-collapse:collapse; }
+  .tbl th{
+    font-size:10px; color:var(--dim); font-weight:600; letter-spacing:.4px; text-align:left;
+    padding:4px 6px; border-bottom:1px solid var(--border); white-space:nowrap;
+  }
+  .tbl th.r, .tbl td.r{ text-align:right; }
+  .tbl td{ padding:6px 6px; border-bottom:1px solid var(--track); font-size:12px; vertical-align:middle; }
+  .tbl tr:last-child td{ border-bottom:none; }
+  .st{ display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; white-space:nowrap; }
+  .st::before{ content:''; width:7px; height:7px; border-radius:99px; }
+  .st.ok{ color:var(--ok); } .st.ok::before{ background:var(--ok); }
+  .st.bad{ color:var(--bad); } .st.bad::before{ background:var(--bad); }
+  .nm{ font-weight:500; max-width:118px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ms{ color:var(--dim); }
+  .rowbar{ position:relative; width:72px; height:5px; border-radius:99px; background:var(--track); overflow:hidden; }
+  .rowbar i{ position:absolute; inset:0 auto 0 0; border-radius:99px; background:var(--ok); }
+  tr.dead .nm, tr.dead .ms, tr.dead .mb{ color:var(--bad); }
+  tr.dead .rowbar i{ background:var(--bad); }
+  .mark{ font-size:10px; padding:2px 7px; border-radius:99px; white-space:nowrap; }
+  .mark.use{ background:color-mix(in srgb,var(--accent) 14%,transparent); color:var(--accent); font-weight:600; }
+  .mark.fast{ background:color-mix(in srgb,var(--ok) 14%,transparent); color:var(--ok); font-weight:600; }
+  tr.current td{ background:color-mix(in srgb,var(--accent) 6%,transparent); }
+  .tbl-note{ font-size:11px; color:var(--dim); margin-top:7px; line-height:1.55; }
+
+  /* 直连一行卡 */
+  .direct{
+    margin-top:10px; display:flex; align-items:center; gap:8px; padding:8px 11px; border-radius:9px;
+    border:1px solid var(--border); background:var(--surface2); font-size:11.5px;
+  }
+  .direct .d{ width:7px; height:7px; border-radius:99px; background:var(--ok); }
+  .direct b{ font-weight:600; }
+  .direct .why{ margin-left:auto; color:var(--dim); font-size:10.5px; }
+
+  /* 机制细节:一行小字置底 */
+  .mech{ border-top:1px solid var(--border); padding:9px 14px 12px; background:var(--surface2); font-size:10.5px; color:var(--dim); line-height:1.6; }
+  .mech b{ color:var(--text); font-weight:600; }
+
+  .anno{
+    max-width:840px; margin-top:26px; border:1.5px dashed var(--border); border-radius:12px; padding:14px 18px;
+    font-size:12.5px; line-height:1.7; color:var(--dim);
+  }
+  .anno h2{ font-size:13px; color:var(--text); margin:0 0 8px; }
+  .anno b{ color:var(--text); }
+  .anno ul{ margin:6px 0 0; padding-left:18px; }
+  .anno li{ margin:3px 0; }
+  code{ background:var(--surface2); border:1px solid var(--border); border-radius:5px; padding:0 5px; font-size:11.5px; }
+</style>
+</head>
+<body>
+<h1>方案B v3 — 节点总览表:一张表回答所有问题</h1>
+<p class="lede">顶部一条状态带(代理●/直连●/当前出口)，主角是一张<b>节点总览表</b>：每一行同时回答"通不通 · 延迟多少 · 实测多快 · 是不是当前出口/最快"。信息密度最高，一屏扫完，适合愿意看一眼表格的用户。代理不通时表格上方弹出红色横幅接管视觉。</p>
+
+<div class="row">
+  <!-- ============ 正常态 ============ -->
+  <div class="col">
+    <p class="cap">状态一 · 全部正常(今天 15:19 实况)</p>
+    <div class="win">
+      <div class="strip">
+        <span class="chip ok"><span class="d"></span>代理通</span>
+        <span class="chip ok"><span class="d"></span>直连通</span>
+        <span class="exit">出口 <b>c51s5</b> · 常规模式自动选优</span>
+      </div>
+      <div class="body">
+        <table class="tbl">
+          <thead><tr><th>状态</th><th>节点</th><th class="r">延迟</th><th>实测(02:14)</th><th class="r">标记</th></tr></thead>
+          <tbody>
+            <tr class="current">
+              <td><span class="st ok">通</span></td><td class="nm">c51s5 :443</td>
+              <td class="r ms num">159ms</td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div class="rowbar"><i style="width:100%"></i></div><span class="mb num" style="font-weight:600">30.4</span></div></td>
+              <td class="r"><span class="mark use">使用中</span></td>
+            </tr>
+            <tr>
+              <td><span class="st ok">通</span></td><td class="nm">c51s3 :443</td>
+              <td class="r ms num">185ms</td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div class="rowbar"><i style="width:94%"></i></div><span class="mb num">28.6</span></div></td>
+              <td class="r"></td>
+            </tr>
+            <tr>
+              <td><span class="st ok">通</span></td><td class="nm">c51s1 :10858</td>
+              <td class="r ms num">391ms</td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div class="rowbar"><i style="width:93%"></i></div><span class="mb num">28.3</span></div></td>
+              <td class="r"></td>
+            </tr>
+            <tr>
+              <td><span class="st ok">通</span></td><td class="nm">c51s4 :443</td>
+              <td class="r ms num">201ms</td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div class="rowbar"><i style="width:86%"></i></div><span class="mb num">26.0</span></div></td>
+              <td class="r"></td>
+            </tr>
+            <tr>
+              <td><span class="st ok">通</span></td><td class="nm">c51s2 :443</td>
+              <td class="r ms num">213ms</td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div class="rowbar"><i style="width:84%"></i></div><span class="mb num">25.4</span></div></td>
+              <td class="r"><span class="mark fast">最快备选</span></td>
+            </tr>
+            <tr>
+              <td><span class="st ok">通</span></td><td class="nm">c51s801 :443</td>
+              <td class="r ms num">213ms</td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div class="rowbar"><i style="width:81%"></i></div><span class="mb num">24.5</span></div></td>
+              <td class="r"></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="tbl-note">延迟 = 每 5 分钟一轮健康检查(15:19);实测 = 最近一次全量测速(今天 02:14,拥堵/故障时才触发)。</div>
+        <div class="direct"><span class="d"></span><b>直连通</b>&nbsp;国内网络正常,微信/淘宝/银行照常 <span class="why">不走代理</span></div>
+      </div>
+      <div class="mech">
+        <b>今日测速额度</b> 248 / 250 MB 已用完 · <span style="color:var(--dim)">只影响测速,联网不受影响,明早自动恢复</span> · 下次巡检 16:10
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 断网态 ============ -->
+  <div class="col">
+    <p class="cap">状态二 · 代理不通(今天上午 11:20–14:40 实况)</p>
+    <div class="win">
+      <div class="banner">
+        <div class="t">代理不通 · 6 个节点全部无响应</div>
+        <div class="s">11:20 起陆续失联,健康检查全部超时(测于 14:15)。<b>通常是订阅过期或流量用尽</b>,更新订阅后自动恢复。系统每 5 分钟自动重试,恢复后即刻接回。</div>
+      </div>
+      <div class="body">
+        <table class="tbl">
+          <thead><tr><th>状态</th><th>节点</th><th class="r">延迟</th><th>实测(10:19)</th><th class="r">标记</th></tr></thead>
+          <tbody>
+            <tr class="dead current">
+              <td><span class="st bad">断</span></td><td class="nm">c51s1 :10858</td>
+              <td class="r">超时</td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div class="rowbar"><i style="width:2%"></i></div><span class="mb num">0.0</span></div></td>
+              <td class="r"><span class="mark use" style="background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad)">出口异常</span></td>
+            </tr>
+            <tr class="dead">
+              <td><span class="st bad">断</span></td><td class="nm">c51s2 :443</td>
+              <td class="r">超时</td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div class="rowbar"><i style="width:2%"></i></div><span class="mb num">0.0</span></div></td>
+              <td class="r"></td>
+            </tr>
+            <tr class="dead">
+              <td><span class="st bad">断</span></td><td class="nm">c51s3 :443</td>
+              <td class="r">超时</td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div class="rowbar"><i style="width:2%"></i></div><span class="mb num">0.0</span></div></td>
+              <td class="r"></td>
+            </tr>
+            <tr class="dead">
+              <td><span class="st bad">断</span></td><td class="nm">c51s4 :443</td>
+              <td class="r">超时</td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div class="rowbar"><i style="width:2%"></i></div><span class="mb num">0.0</span></div></td>
+              <td class="r"></td>
+            </tr>
+            <tr class="dead">
+              <td><span class="st bad">断</span></td><td class="nm">c51s5 :443</td>
+              <td class="r">超时</td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div class="rowbar"><i style="width:2%"></i></div><span class="mb num">0.0</span></div></td>
+              <td class="r"></td>
+            </tr>
+            <tr class="dead">
+              <td><span class="st bad">断</span></td><td class="nm">c51s801 :443</td>
+              <td class="r">超时</td>
+              <td><div style="display:flex;align-items:center;gap:6px"><div class="rowbar"><i style="width:2%"></i></div><span class="mb num">0.0</span></div></td>
+              <td class="r"></td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="direct"><span class="d"></span><b>直连通</b>&nbsp;国内网络正常 <span class="why">不上外网的话可先用国内网络</span></div>
+      </div>
+      <div class="mech">
+        <b>今日测速额度</b> 已用完 · 巡检改为只监控连通性,发现恢复即刻接回 · 下次自动重试 16:10
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="anno">
+  <h2>设计说明</h2>
+  <ul>
+    <li><b>与方案A的区别</b>:方案A是"状态灯 + 分区块";本方案把通断、延迟、实测、标记<b>合并成一张表</b>——每一行就是一条路径,表格即答案。密度更高、弹窗更矮,代价是需要用户能接受看表。</li>
+    <li><b>当前出口高亮</b>:使用中的行整行淡蓝底色,一眼锁定"现在走的是谁"。</li>
+    <li><b>断网态</b>:状态带升级为红色横幅(更大的视觉接管),表内全红,直连卡仍在底部安抚"国内网络可用"。</li>
+    <li><b>数据来源</b>:与方案A完全一致——健康检查(<code>alive/delay</code>)现成,实测吞吐现成;仅"直连通"需在桥里新增一个每 30s 的国内 204 直连探测(约 10 行)。</li>
+  </ul>
+</div>
+</body>
+</html>

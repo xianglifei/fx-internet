@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案A v3 — 双灯总览:通断优先</title>
+<style>
+  :root{ color-scheme: light dark; }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; padding:24px 16px 48px;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    background:light-dark(#e9edf3,#0b101a); color:light-dark(#1b2334,#e7edf6);
+    --surface:light-dark(#ffffff,#121927); --surface2:light-dark(#f3f5f9,#1a2333);
+    --track:light-dark(#e6eaf1,#1f2937); --border:light-dark(#dde3ec,#243145);
+    --text:light-dark(#1b2334,#e7edf6); --dim:light-dark(#5f6d84,#8fa0b8);
+    --accent:light-dark(#3457ff,#7d95ff);
+    --ok:light-dark(#15803d,#3ecf8e); --warn:light-dark(#b45309,#f2b13d); --bad:light-dark(#c2364a,#f3717f);
+  }
+  .num{ font-variant-numeric:tabular-nums; }
+  .dim{ color:var(--dim); }
+  h1{ font-size:16px; margin:0 0 4px; }
+  .lede{ font-size:12.5px; color:var(--dim); margin:0 0 20px; line-height:1.6; }
+  .row{ display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start; }
+
+  /* ===== 弹窗卡片(与现网同宽 400px) ===== */
+  .win{
+    width:400px; border:1px solid var(--border); border-radius:14px; background:var(--surface); overflow:hidden;
+    box-shadow:light-dark(0 1px 3px rgba(15,23,42,.06),0 1px 3px rgba(0,0,0,.45));
+  }
+  .cap{ font-size:12px; font-weight:600; color:var(--dim); margin:0 0 8px; letter-spacing:.3px; }
+  .col{ max-width:400px; }
+
+  /* 双灯状态带:两个最重要的信号永远在最顶上 */
+  .lamps{
+    display:flex; border-bottom:1px solid var(--border); background:var(--surface2);
+  }
+  .lampcell{ flex:1; padding:11px 14px 10px; display:flex; align-items:center; gap:8px; }
+  .lampcell + .lampcell{ border-left:1px solid var(--border); }
+  .lamp{ width:11px; height:11px; border-radius:99px; flex:none; }
+  .lamp.ok{ background:var(--ok); box-shadow:0 0 0 4px color-mix(in srgb,var(--ok) 16%,transparent); }
+  .lamp.bad{ background:var(--bad); box-shadow:0 0 0 4px color-mix(in srgb,var(--bad) 16%,transparent); }
+  .lampname{ font-size:12px; font-weight:600; }
+  .lampval{ font-size:11px; margin-left:auto; }
+  .lampval.ok{ color:var(--ok); } .lampval.bad{ color:var(--bad); }
+
+  .body{ padding:14px 16px 12px; }
+  /* 主状态:代理 */
+  .main-line{ display:flex; align-items:baseline; gap:10px; }
+  .main-state{ font-size:21px; font-weight:700; }
+  .main-state.ok{ color:var(--ok); } .main-state.bad{ color:var(--bad); }
+  .main-sub{ font-size:12px; color:var(--dim); }
+  .exit-card{
+    margin-top:10px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--surface2);
+    display:flex; align-items:center; gap:10px;
+  }
+  .exit-name{ font-size:13px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .exit-meta{ font-size:11px; color:var(--dim); margin-top:2px; }
+  .exit-badge{
+    margin-left:auto; flex:none; font-size:10.5px; padding:3px 8px; border-radius:99px;
+    background:color-mix(in srgb,var(--accent) 14%,transparent); color:var(--accent); font-weight:600;
+  }
+
+  /* 节点通断网格 */
+  .sec-title{ font-size:11px; color:var(--dim); font-weight:600; letter-spacing:.4px; margin:14px 0 6px; }
+  .ngrid{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .ncell{
+    display:flex; align-items:center; gap:7px; padding:7px 9px; border-radius:9px;
+    border:1px solid var(--border); background:var(--surface2); min-width:0;
+  }
+  .ndot{ width:7px; height:7px; border-radius:99px; flex:none; }
+  .ndot.ok{ background:var(--ok); } .ndot.bad{ background:var(--bad); }
+  .nname{ font-size:11.5px; font-weight:500; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .nms{ margin-left:auto; font-size:11px; color:var(--dim); flex:none; }
+  .ncell.bad .nname{ color:var(--bad); }
+  .ncell.bad .nms{ color:var(--bad); }
+
+  /* 测速区 */
+  .speed{ display:flex; align-items:center; gap:8px; font-size:11.5px; padding:3px 0; }
+  .sname{ width:118px; flex:none; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sbar{ flex:1; height:5px; border-radius:99px; background:var(--track); overflow:hidden; }
+  .sfill{ height:100%; border-radius:99px; background:var(--ok); }
+  .smbps{ width:52px; text-align:right; font-size:11.5px; font-weight:600; flex:none; }
+  .stag{ width:56px; text-align:right; font-size:10px; flex:none; }
+  .stag.me{ color:var(--accent); font-weight:600; } .stag.top{ color:var(--ok); }
+  .speed.dead .sname,.speed.dead .smbps{ color:var(--bad); }
+  .speed.dead .sfill{ background:var(--bad); }
+  .speedmeta{ font-size:11px; color:var(--dim); margin-top:6px; line-height:1.5; }
+
+  /* 机制细节:弱化置底 */
+  .mech{
+    border-top:1px solid var(--border); padding:9px 16px 12px; background:var(--surface2);
+    font-size:10.5px; color:var(--dim); line-height:1.6;
+  }
+  .mech b{ color:var(--text); font-weight:600; }
+  .mech .quiet{ color:color-mix(in srgb,var(--dim) 80%,transparent); }
+
+  /* ===== 设计说明 ===== */
+  .anno{
+    max-width:840px; margin-top:26px; border:1.5px dashed var(--border); border-radius:12px; padding:14px 18px;
+    font-size:12.5px; line-height:1.7; color:var(--dim);
+  }
+  .anno h2{ font-size:13px; color:var(--text); margin:0 0 8px; }
+  .anno b{ color:var(--text); }
+  .anno ul{ margin:6px 0 0; padding-left:18px; }
+  .anno li{ margin:3px 0; }
+  code{ background:var(--surface2); border:1px solid var(--border); border-radius:5px; padding:0 5px; font-size:11.5px; }
+</style>
+</head>
+<body>
+<h1>方案A v3 — 双灯总览:通断优先</h1>
+<p class="lede">顶部常驻两盏灯：<b>代理</b> 与 <b>直连</b>，各自独立检测、独立显示——回答你最重要的两个问题。其下依次是：当前出口 → 节点通断网格 → 测速排序。巡检/额度等机制细节全部弱化到底部一行小字。</p>
+
+<div class="row">
+  <!-- ============ 左:正常态(今天 15:19 真实数据) ============ -->
+  <div class="col">
+    <p class="cap">状态一 · 全部正常(今天 15:19 实况)</p>
+    <div class="win">
+      <div class="lamps">
+        <div class="lampcell"><span class="lamp ok"></span><span class="lampname">代理</span><span class="lampval ok">通</span></div>
+        <div class="lampcell"><span class="lamp ok"></span><span class="lampname">直连</span><span class="lampval ok">通</span></div>
+      </div>
+      <div class="body">
+        <div class="main-line">
+          <span class="main-state ok">6 个节点全部在线</span>
+          <span class="main-sub">常规模式自动选优</span>
+        </div>
+        <div class="exit-card">
+          <div style="min-width:0">
+            <div class="exit-name">c51s5.portablesubmarines.com:443</div>
+            <div class="exit-meta">健康延迟 <b class="num">159 ms</b> · 上次实测 <b class="num">30.4 Mbps</b>(02:14)</div>
+          </div>
+          <span class="exit-badge">当前出口</span>
+        </div>
+
+        <div class="sec-title">节点通断 · 健康检查(5 分钟/轮,15:19)</div>
+        <div class="ngrid">
+          <div class="ncell"><span class="ndot ok"></span><span class="nname">c51s1 :10858</span><span class="nms num">391ms</span></div>
+          <div class="ncell"><span class="ndot ok"></span><span class="nname">c51s2 :443</span><span class="nms num">213ms</span></div>
+          <div class="ncell"><span class="ndot ok"></span><span class="nname">c51s3 :443</span><span class="nms num">185ms</span></div>
+          <div class="ncell"><span class="ndot ok"></span><span class="nname">c51s4 :443</span><span class="nms num">201ms</span></div>
+          <div class="ncell"><span class="ndot ok"></span><span class="nname">c51s5 :443</span><span class="nms num">159ms</span></div>
+          <div class="ncell"><span class="ndot ok"></span><span class="nname">c51s801 :443</span><span class="nms num">213ms</span></div>
+        </div>
+
+        <div class="sec-title">测速排名 · 上次全量实测 今天 02:14</div>
+        <div class="speed"><span class="sname">c51s5 :443</span><div class="sbar"><div class="sfill" style="width:100%"></div></div><span class="smbps num">30.4</span><span class="stag me">使用中·最快</span></div>
+        <div class="speed"><span class="sname">c51s3 :443</span><div class="sbar"><div class="sfill" style="width:94%"></div></div><span class="smbps num">28.6</span><span class="stag"></span></div>
+        <div class="speed"><span class="sname">c51s1 :10858</span><div class="sbar"><div class="sfill" style="width:93%"></div></div><span class="smbps num">28.3</span><span class="stag"></span></div>
+        <div class="speed"><span class="sname">c51s4 :443</span><div class="sbar"><div class="sfill" style="width:86%"></div></div><span class="smbps num">26.0</span><span class="stag"></span></div>
+        <div class="speed"><span class="sname">c51s2 :443</span><div class="sbar"><div class="sfill" style="width:84%"></div></div><span class="smbps num">25.4</span><span class="stag"></span></div>
+        <div class="speed"><span class="sname">c51s801 :443</span><div class="sbar"><div class="sfill" style="width:81%"></div></div><span class="smbps num">24.5</span><span class="stag"></span></div>
+        <div class="speedmeta">测速只发生在拥堵/故障时;平时每小时一次轻探测(约 4 MB)确认出口达标。</div>
+      </div>
+      <div class="mech">
+        <b>今日测速额度</b> 248 / 250 MB · 已用完 —— <span class="quiet">只影响测速排名,联网不受影响;明早 00:00 自动恢复</span><br>
+        <span class="quiet">下次巡检 16:10 · 代理端口 7897 · 系统代理已接管</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 右:断网态(今天上午 13:00 真实场景) ============ -->
+  <div class="col">
+    <p class="cap">状态二 · 代理不通(今天上午 11:20–14:40 实况)</p>
+    <div class="win">
+      <div class="lamps">
+        <div class="lampcell"><span class="lamp bad"></span><span class="lampname">代理</span><span class="lampval bad">不通</span></div>
+        <div class="lampcell"><span class="lamp ok"></span><span class="lampname">直连</span><span class="lampval ok">通</span></div>
+      </div>
+      <div class="body">
+        <div class="main-line">
+          <span class="main-state bad">6 个节点全部无响应</span>
+          <span class="main-sub">正在自动重试</span>
+        </div>
+        <div class="exit-card" style="border-color:color-mix(in srgb,var(--bad) 35%,var(--border))">
+          <div style="min-width:0">
+            <div class="exit-name" style="color:var(--bad)">c51s1.portablesubmarines.com:10858</div>
+            <div class="exit-meta">健康检查超时(测于 14:15) · 外网访问失败</div>
+          </div>
+          <span class="exit-badge" style="background:color-mix(in srgb,var(--bad) 14%,transparent);color:var(--bad)">出口异常</span>
+        </div>
+
+        <div class="sec-title">节点通断 · 健康检查(测于 14:15)</div>
+        <div class="ngrid">
+          <div class="ncell bad"><span class="ndot bad"></span><span class="nname">c51s1 :10858</span><span class="nms">超时</span></div>
+          <div class="ncell bad"><span class="ndot bad"></span><span class="nname">c51s2 :443</span><span class="nms">超时</span></div>
+          <div class="ncell bad"><span class="ndot bad"></span><span class="nname">c51s3 :443</span><span class="nms">超时</span></div>
+          <div class="ncell bad"><span class="ndot bad"></span><span class="nname">c51s4 :443</span><span class="nms">超时</span></div>
+          <div class="ncell bad"><span class="ndot bad"></span><span class="nname">c51s5 :443</span><span class="nms">超时</span></div>
+          <div class="ncell bad"><span class="ndot bad"></span><span class="nname">c51s801 :443</span><span class="nms">超时</span></div>
+        </div>
+
+        <div class="sec-title">测速排名 · 上次全量实测 今天 10:19</div>
+        <div class="speed dead"><span class="sname">c51s1 :10858</span><div class="sbar"><div class="sfill" style="width:2%"></div></div><span class="smbps num">0.0</span><span class="stag"></span></div>
+        <div class="speed dead"><span class="sname">c51s2 :443</span><div class="sbar"><div class="sfill" style="width:2%"></div></div><span class="smbps num">0.0</span><span class="stag"></span></div>
+        <div class="speed dead"><span class="sname">c51s3 :443</span><div class="sbar"><div class="sfill" style="width:2%"></div></div><span class="smbps num">0.0</span><span class="stag"></span></div>
+        <div class="speedmeta">11:20 起全部节点失联。<b style="color:var(--text)">通常为订阅过期或流量用尽;更新订阅后自动恢复,也可等待服务商换 IP 后自动愈。</b>直连(国内网络)不受影响,微信/淘宝/银行 App 照常可用。</div>
+      </div>
+      <div class="mech">
+        <b>今日测速额度</b> 已用完 —— <span class="quiet">巡检改为只监控连通性,发现恢复即刻自动接回</span><br>
+        <span class="quiet">下次自动重试 16:10 · 代理端口 7897 · 系统代理已接管</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="anno">
+  <h2>设计说明</h2>
+  <ul>
+    <li><b>信息层级</b>:双灯(代理/直连,常驻最顶) → 主状态一句话 + 当前出口卡 → 节点通断网格(谁通谁不通一眼扫完) → 测速排名(谁最快、上次何时测、选了谁) → 机制细节弱化为一行小字。</li>
+    <li><b>数据来源</b>:节点通断+延迟 = 现成的 <code>/api/mihomo/providers/proxies/JMS</code>(mihomo 健康检查每 5 分钟一轮,<code>alive</code>/<code>delay</code>/<code>time</code> 字段都在),UI 已在轮询该接口,只是现在没用健康数据;实测吞吐与时间 = 现成 <code>patrol.last_event.sweep</code>。<b>唯一需要新增</b>:桥里加一个直连检查(每 30s 对国内 204 站点发一次探测,零代理流量,约 10 行)。</li>
+    <li><b>预算文案</b>:不再出现"探测预算/巡检状态待确认"这类黑话;断网态的说明直接告诉用户"微信/淘宝照常可用、更新订阅后自动恢复"。</li>
+    <li><b>尺寸</b>:与现网弹窗同宽 400px;绿态高度约 430px(比现网展开态略高,因为通断网格常驻;也可做成绿态默认折叠测速区再省 ~90px)。</li>
+  </ul>
+</div>
+</body>
+</html>

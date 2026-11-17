@@ -5,137 +5,177 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fx-internet</title>
 <style>
+  /* 方案B v3「节点总览表」:顶部状态带(代理/直连/出口) + 节点总览表(通断/延迟/实测/标记)
+     + 直连卡;巡检/额度等机制细节弱化置底。信息优先级:
+     1) 代理通不通(谁在线、当前走谁) 2) 直连通不通 3) 谁最快、上次何时实测 */
   :root{ color-scheme: light dark; }
-  *{ box-sizing: border-box; }
+  *{ box-sizing:border-box; }
   html,body{ margin:0; padding:0; }
   body{
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
-    -webkit-font-smoothing: antialiased;
-    background: light-dark(#e9edf3, #0b101a);
-    color: light-dark(#1b2334, #e7edf6);
-    display:flex; justify-content:center; padding: 20px 8px 40px;
-    --surface: light-dark(#ffffff, #121927);
-    --surface2: light-dark(#f3f5f9, #1a2333);
-    --track: light-dark(#e6eaf1, #1f2937);
-    --border: light-dark(#dde3ec, #243145);
-    --text: light-dark(#1b2334, #e7edf6);
-    --dim: light-dark(#5f6d84, #8fa0b8);
-    --accent: light-dark(#3457ff, #7d95ff);
-    --ok: light-dark(#15803d, #3ecf8e);
-    --warn: light-dark(#b45309, #f2b13d);
-    --bad: light-dark(#c2364a, #f3717f);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    background:light-dark(#e9edf3,#0b101a);
+    color:light-dark(#1b2334,#e7edf6);
+    display:flex; justify-content:center; padding:20px 8px 40px;
+    --surface:light-dark(#ffffff,#121927);
+    --surface2:light-dark(#f3f5f9,#1a2333);
+    --track:light-dark(#e6eaf1,#1f2937);
+    --border:light-dark(#dde3ec,#243145);
+    --text:light-dark(#1b2334,#e7edf6);
+    --dim:light-dark(#5f6d84,#8fa0b8);
+    --accent:light-dark(#3457ff,#7d95ff);
+    --ok:light-dark(#15803d,#3ecf8e);
+    --warn:light-dark(#b45309,#f2b13d);
+    --bad:light-dark(#c2364a,#f3717f);
   }
-  .num{ font-variant-numeric: tabular-nums; }
-  .dim{ color: var(--dim); }
+  .num{ font-variant-numeric:tabular-nums; }
+  .dim{ color:var(--dim); }
 
   .win{
-    width: min(400px, 100%);   /* 统一紧凑宽度(所有状态);固定像素,不依赖容器,杜绝弹窗尺寸死锁 */
-    border: 1px solid var(--border); border-radius: 14px; background: var(--surface);
-    overflow: hidden; box-shadow: light-dark(0 1px 3px rgba(15,23,42,.06), 0 1px 3px rgba(0,0,0,.45));
+    width:min(400px,100%);
+    border:1px solid var(--border); border-radius:14px; background:var(--surface);
+    overflow:hidden; box-shadow:light-dark(0 1px 3px rgba(15,23,42,.06),0 1px 3px rgba(0,0,0,.45));
   }
-  /* 绿态更矮;黄/红态 210 容纳说明文字(400 宽下自动换行,字号已整体调小) */
-  .win.compact .body-l1{ height: 150px; }
-  .win.compact .state{ font-size: 18px; }
-  .win.compact .exit{ font-size: 13px; margin-top: 10px; }
-  .win.compact .alive{ margin-top: 6px; }
-  .win.compact .openbtn{ margin-top: 14px; height: 26px; padding: 0 10px; font-size: 12px; }
-  /* 嵌入菜单栏 popover 时:去掉卡片外框(气泡自带.chrome),页面透明贴合 */
-  body.embedded{ background: transparent; padding: 0; justify-content: flex-start; }
-  body.embedded .win{ border: none; box-shadow: none; }
-  .bar{
-    display:flex; align-items:center; gap:8px; padding:10px 16px;
-    border-bottom:1px solid var(--border); background:var(--surface2);
-    font-size:13px; font-weight:600;
-  }
-  .dot{ width:8px; height:8px; border-radius:99px; margin-left:auto; background:var(--dim); }
-  .dot.green{ background:var(--ok); } .dot.yellow{ background:var(--warn); } .dot.red{ background:var(--bad); }
+  body.embedded{ background:transparent; padding:0; justify-content:flex-start; }
+  body.embedded .win{ border:none; box-shadow:none; }
 
-  /* 一级:绿态 150 / 黄红态 210。不做 CSS 过渡——尺寸变化交给 popover 原生动画,避免双动画打架 */
+  /* 一级区:绿态 150 / 其余 210(selftest 断言依赖) */
   .body-l1{
-    height:210px; padding:0 22px;
-    display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;
+    height:210px; display:flex; flex-direction:column;
   }
-  .state{ display:flex; align-items:center; justify-content:center; gap:9px; font-size:19px; font-weight:600; }
-  .lamp{ width:12px; height:12px; border-radius:99px; flex:none; }
-  .lamp.green{ background:var(--ok); box-shadow:0 0 0 4px color-mix(in srgb, var(--ok) 18%, transparent); }
-  .lamp.yellow{ background:var(--warn); box-shadow:0 0 0 4px color-mix(in srgb, var(--warn) 18%, transparent); }
-  .lamp.red{ background:var(--bad); box-shadow:0 0 0 4px color-mix(in srgb, var(--bad) 18%, transparent); }
-  .state.green{ color:var(--ok); } .state.yellow{ color:var(--warn); } .state.red{ color:var(--bad); }
-  .exit{ margin-top:11px; font-size:13.5px; color:var(--dim); }
-  .exit b{ color:var(--text); font-weight:600; }
-  .alive{ margin-top:6px; font-size:11.5px; color:var(--dim); }
-  .note{ margin-top:12px; max-width:345px; font-size:12px; color:var(--dim); line-height:1.55; }
-  .openbtn{ margin-top:14px; }
+  .win.compact .body-l1{ height:150px; }
+
+  /* 顶部状态带:两个最重要的信号(代理/直连)+ 当前出口 */
+  .strip{
+    display:flex; align-items:center; gap:6px; padding:10px 14px;
+    background:var(--surface2); border-bottom:1px solid var(--border); flex:none;
+  }
+  .chip{
+    display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:99px;
+    border:1px solid var(--border); background:var(--surface);
+    font-size:12px; font-weight:600; white-space:nowrap;
+  }
+  .chip .d{ width:7px; height:7px; border-radius:99px; background:var(--dim); flex:none; }
+  .chip.ok{ color:var(--ok); } .chip.ok .d{ background:var(--ok); }
+  .chip.bad{ color:var(--bad); border-color:color-mix(in srgb,var(--bad) 40%,var(--border)); }
+  .chip.bad .d{ background:var(--bad); }
+  .strip-exit{
+    margin-left:auto; font-size:11px; color:var(--dim); min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .strip-exit b{ color:var(--text); font-weight:600; }
+
+  /* 断网横幅:代理不通时替换状态带说明区 */
+  .banner{
+    padding:10px 14px; flex:none;
+    background:color-mix(in srgb,var(--bad) 10%,var(--surface2));
+    border-bottom:1px solid color-mix(in srgb,var(--bad) 30%,var(--border));
+    font-size:11.5px; color:var(--dim); line-height:1.55;
+  }
+  .banner b{ color:var(--text); }
+
+  /* 主区:一句结论 + 出口明细 */
+  .hero{ flex:1; padding:10px 16px 12px; display:flex; flex-direction:column; justify-content:space-evenly; min-height:0; }
+  .state{ display:flex; align-items:center; gap:9px; font-size:19px; font-weight:700; }
+  .lamp{ width:12px; height:12px; border-radius:99px; flex:none; background:var(--dim); }
+  .lamp.ok{ background:var(--ok); box-shadow:0 0 0 4px color-mix(in srgb,var(--ok) 16%,transparent); }
+  .lamp.bad{ background:var(--bad); box-shadow:0 0 0 4px color-mix(in srgb,var(--bad) 16%,transparent); }
+  .state.ok{ color:var(--ok); } .state.bad{ color:var(--bad); } .state.dim{ color:var(--dim); }
+  .herosub{ font-size:11.5px; color:var(--dim); font-weight:500; }
+  .exitline{ font-size:12px; color:var(--dim); }
+  .exitline b{ color:var(--text); font-weight:600; }
 
   .btn{
-    display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 12px; border-radius:8px;
-    border:1px solid var(--border); background:var(--surface); font-size:12.5px; color:var(--text);
+    display:inline-flex; align-items:center; gap:6px; height:26px; padding:0 10px; border-radius:8px;
+    border:1px solid var(--border); background:var(--surface); font-size:12px; color:var(--text);
     cursor:pointer;
   }
-  .btn.primary{ background:var(--accent); border-color:transparent; color: light-dark(#fff, #0b101a); }
+  .btn.primary{ background:var(--accent); border-color:transparent; color:light-dark(#fff,#0b101a); }
   .btn.ghost{ border-color:transparent; background:transparent; color:var(--dim); }
+  .btn.ghost:hover{ color:var(--text); }
   .btn:disabled{ opacity:.5; cursor:default; }
+  .openbtn{ align-self:center; margin-top:4px; }
 
-  /* 二级(用户主动展开;400 宽紧凑布局,字号整体下调) */
+  /* 二级:节点总览表(用户展开) */
   .detail{ border-top:1px solid var(--border); display:none; }
   .detail.show{ display:block; }
-  .d-head{ padding:14px 16px 10px; }
-  .d-state{ display:flex; align-items:center; gap:8px; font-size:14px; font-weight:600; }
-  .d-lamp{ width:9px; height:9px; border-radius:99px; flex:none; }
-  .d-state.green{ color:var(--ok);} .d-state.yellow{ color:var(--warn);} .d-state.red{ color:var(--bad);}
-  .d-state.green .d-lamp{ background:var(--ok);} .d-state.yellow .d-lamp{ background:var(--warn);} .d-state.red .d-lamp{ background:var(--bad);}
-  .d-exp{ margin-top:7px; font-size:11.5px; color:var(--dim); line-height:1.55; }
-  .sec{ padding:10px 16px 2px; }
-  .sec-title{ font-size:11px; color:var(--dim); font-weight:600; letter-spacing:.4px; margin-bottom:6px; }
-  .node{ display:grid; grid-template-columns:60px minmax(0,1fr) 46px 64px; gap:8px; align-items:center; padding:4px 0; }
-  .node .name{ font-size:12px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .nbar{ position:relative; height:6px; border-radius:99px; background:var(--track); overflow:hidden; }
-  .nfill{ height:100%; border-radius:99px; background:var(--ok); }
-  .nfill.warn{ background:var(--warn); } .nfill.bad{ background:var(--bad); }
-  .node .mbps{ font-size:12px; font-weight:600; text-align:right; }
-  .node .tag{ font-size:10.5px; color:var(--dim); text-align:right; white-space:nowrap; }
-  .node.dead .name, .node.dead .mbps{ color:var(--bad); }
-  .tl{ list-style:none; margin:0; padding:0; }
-  .tl li{ display:flex; gap:10px; padding:4px 0; font-size:12px; }
-  .tl .t{ color:var(--dim); width:76px; flex:none; }
-  .foot{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:8px; padding:10px 16px 14px; border-top:1px solid var(--border); }
-  .quota{ margin-right:auto; font-size:11px; color:var(--dim); }
-  .qbar{ width:70px; height:5px; border-radius:99px; background:var(--track); display:inline-block; vertical-align:middle; margin-left:6px; }
-  .qbar i{ display:block; height:100%; border-radius:99px; background:var(--ok); }
-  @media (max-width:520px){ .node{ grid-template-columns:64px minmax(0,1fr) 46px; } .node .tag{ display:none; } .tl .t{ width:78px; } }
+  .tblwrap{ padding:10px 14px 2px; }
+  .tbl{ width:100%; border-collapse:collapse; }
+  .tbl th{
+    font-size:10px; color:var(--dim); font-weight:600; letter-spacing:.4px; text-align:left;
+    padding:4px 5px; border-bottom:1px solid var(--border); white-space:nowrap;
+  }
+  .tbl th.r,.tbl td.r{ text-align:right; }
+  .tbl td{ padding:6px 5px; border-bottom:1px solid var(--track); font-size:12px; vertical-align:middle; }
+  .tbl tr:last-child td{ border-bottom:none; }
+  .st{ display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; white-space:nowrap; }
+  .st::before{ content:''; width:7px; height:7px; border-radius:99px; }
+  .st.ok{ color:var(--ok); } .st.ok::before{ background:var(--ok); }
+  .st.bad{ color:var(--bad); } .st.bad::before{ background:var(--bad); }
+  .nm{ font-weight:500; max-width:112px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ms{ color:var(--dim); white-space:nowrap; }
+  .cellbar{ display:flex; align-items:center; gap:6px; }
+  .rowbar{ position:relative; width:64px; height:5px; border-radius:99px; background:var(--track); overflow:hidden; flex:none; }
+  .rowbar i{ position:absolute; inset:0 auto 0 0; border-radius:99px; background:var(--ok); }
+  .mb{ font-weight:600; white-space:nowrap; }
+  tr.dead .nm,tr.dead .ms,tr.dead .mb{ color:var(--bad); }
+  tr.dead .rowbar i{ background:var(--bad); }
+  tr.current td{ background:color-mix(in srgb,var(--accent) 6%,transparent); }
+  .mark{ font-size:10px; padding:2px 7px; border-radius:99px; white-space:nowrap; }
+  .mark.use{ background:color-mix(in srgb,var(--accent) 14%,transparent); color:var(--accent); font-weight:600; }
+  .mark.fast{ background:color-mix(in srgb,var(--ok) 14%,transparent); color:var(--ok); font-weight:600; }
+  .mark.down{ background:color-mix(in srgb,var(--bad) 14%,transparent); color:var(--bad); font-weight:600; }
+  .tbl-note{ font-size:10.5px; color:var(--dim); margin:7px 2px 0; line-height:1.55; }
+
+  /* 直连卡 */
+  .direct{
+    margin:10px 14px 0; display:flex; align-items:center; gap:8px; padding:8px 11px; border-radius:9px;
+    border:1px solid var(--border); background:var(--surface2); font-size:11.5px;
+  }
+  .direct .d{ width:7px; height:7px; border-radius:99px; background:var(--dim); flex:none; }
+  .direct.ok .d{ background:var(--ok); } .direct.bad .d{ background:var(--bad); }
+  .direct b{ font-weight:600; }
+  .direct .why{ margin-left:auto; color:var(--dim); font-size:10.5px; white-space:nowrap; }
+
+  /* 机制细节:弱化置底 */
+  .mech{
+    margin-top:10px; padding:9px 14px 10px; background:var(--surface2); border-top:1px solid var(--border);
+    font-size:10.5px; color:var(--dim); line-height:1.6;
+  }
+  .mech b{ color:var(--text); font-weight:600; }
+  .foot{ display:flex; align-items:center; gap:4px; padding:8px 10px 12px; border-top:1px solid var(--border); }
+  .foot .btn{ height:24px; font-size:11px; padding:0 8px; }
 </style>
 </head>
 <body>
-<div class="win" id="win">
-  <div class="bar">
-    <span>fx-internet</span><span class="dot dim" id="bar-dot"></span>
-  </div>
-
+<div class="win compact" id="win">
   <div class="body-l1" id="l1">
-    <div class="state green" id="st"><span class="lamp green" id="lamp"></span><span id="st-text">连接中…</span></div>
-    <div class="exit" id="l1-exit">正在获取状态…</div>
-    <div class="alive" id="l1-alive"></div>
-    <div class="note" id="l1-note" hidden></div>
-    <button class="btn ghost openbtn" id="open-btn">查看详情 ▾</button>
+    <div class="strip" id="strip">
+      <span class="chip" id="chip-proxy"><span class="d"></span><span id="chip-proxy-t">代理…</span></span>
+      <span class="chip" id="chip-direct"><span class="d"></span><span id="chip-direct-t">直连…</span></span>
+      <span class="strip-exit" id="strip-exit"></span>
+    </div>
+    <div class="banner" id="banner" hidden></div>
+    <div class="hero">
+      <div class="state" id="st"><span class="lamp" id="lamp"></span><span id="st-text">连接中…</span><span class="herosub" id="l1-sub"></span></div>
+      <div class="exitline" id="l1-exit"></div>
+      <button class="btn ghost openbtn" id="open-btn">节点明细与测速 ▾</button>
+    </div>
   </div>
 
   <div class="detail" id="detail">
-    <div class="d-head">
-      <div class="d-state green" id="d-state"><span class="d-lamp"></span><span id="d-state-text"></span></div>
-      <p class="d-exp" id="d-exp"></p>
+    <div class="tblwrap">
+      <table class="tbl">
+        <thead><tr><th>状态</th><th>节点</th><th class="r">延迟</th><th>实测(<span id="th-sweep-at">—</span>)</th><th class="r">标记</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="5" class="dim" style="font-size:12px">正在获取节点…</td></tr></tbody>
+      </table>
+      <div class="tbl-note" id="tbl-note"></div>
     </div>
-    <div class="sec">
-      <div class="sec-title">节点池 · 实测吞吐(Mbps)</div>
-      <div id="nodes"><div class="dim" style="font-size:12px">暂无实测数据(等待第一次巡检)</div></div>
-    </div>
-    <div class="sec">
-      <div class="sec-title">最近决策</div>
-      <ul class="tl" id="tl"><li class="dim">暂无</li></ul>
-    </div>
+    <div class="direct" id="direct-card"><span class="d"></span><span id="direct-t">直连检测中…</span><span class="why" id="direct-why"></span></div>
+    <div class="mech" id="mech"></div>
     <div class="foot">
-      <span class="quota" id="quota"></span>
-      <button class="btn" id="a-patrol">立即巡检</button>
-      <button class="btn ghost" id="a-handoff">交还常规模式</button>
+      <button class="btn ghost" id="a-patrol">立即巡检</button>
+      <button class="btn ghost" id="a-handoff">交还常规</button>
       <button class="btn ghost" id="a-restart">重启内核</button>
     </div>
   </div>
@@ -144,7 +184,7 @@
 <script>
 (function(){
   var $ = function(id){ return document.getElementById(id); };
-  var open = false, last = null, sweep = null, nodes = [], lastPosted = "";
+  var open = false, last = null, sweep = null, sweepAt = null, nodes = [], lastPosted = "";
 
   // 嵌入菜单栏 popover(WKWebView)时:贴合气泡、把窗口尺寸实时报给原生侧
   var embedded = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.panelSize);
@@ -159,159 +199,197 @@
     window.webkit.messageHandlers.panelSize.postMessage({ w: Math.round(r.width), h: Math.round(r.height) });
   }
 
-  // 事件类型 → 人话决策句
-  var SENTENCES = {
-    steady_ok: function(e){ return "出口 "+e.exit+" "+e.mbps+" Mbps,一切正常,无需干预"; },
-    congestion_pin: function(e){ return "拥堵介入:"+e.auto_pick+" 仅 "+e.prev_mbps+" Mbps,全量实测后钉住 "+e.to+"("+e.mbps+" Mbps)"; },
-    fault_switch: function(e){ return "故障自愈:"+e.prev+" 无响应,全量扫描后换钉 "+e.to+"("+e.mbps+" Mbps)"; },
-    repin: function(e){ return "换钉:"+e.prev+" → "+e.to+"("+e.mbps+" Mbps)"; },
-    keep_pin: function(e){ return "维持钉住 "+e.pinned+"("+e.mbps+" Mbps),无更优节点"; },
-    keep_auto: function(e){ return "保持常规模式("+e.exit+" "+e.mbps+" Mbps),无更优节点"; },
-    pin_ok: function(e){ return "钉住节点达标("+e.mbps+" Mbps),回归观察 "+e.streak+"/"+e.total; },
-    handoff: function(e){ return "拥堵消退,已自动交还常规模式("+e.auto_pick+" "+e.auto_mbps+" Mbps)"; },
-    still_congested: function(e){ return "拥堵仍在,继续钉 "+e.to+"("+e.mbps+" Mbps)"; },
-    all_dead: function(e){ return "所有节点都不可用 —— 通常是订阅过期或流量用尽"; },
-    skip: function(e){
-      return e.reason === "kernel_down" ? "内核未运行,巡检静默跳过"
-           : e.reason === "already_running" ? "已有巡检在运行,本次跳过"
-           : "巡检跳过:" + (e.reason || "未知原因");
-    },
-    budget_exhausted: function(e){ return "探测预算已用尽，保留连通性检查"; },
-    error: function(e){ return "巡检异常:"+e.error; }
-  };
-
   // 订阅源节点名会流入 innerHTML,一律转义(面板与桥同源,注入=遥控网关)
   function esc(s){
     return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
       return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c];
     });
   }
+  function hhmm(ts){ return ts ? ts.slice(11,16) : null; }
 
-  var HEAD = {
-    status_unknown: ["状态数据已过期", "等待监测恢复，请查看桥接日志。"],
-    no_nodes: ["没有可用节点配置", "请检查订阅与内核配置。"],
-    patrol_unknown: ["巡检状态待确认", "最近巡检失败、跳过或数据已过期，请查看详情。"],
-    green:  ["一切正常", null],
-    pinned: ["网络偏慢,已自动切换到最快节点",
-             "晚高峰链路拥堵。拥堵消退并复测达标后,系统会自动切回常规模式,期间无需任何操作。"],
-    sysproxy_requires_admin: ["系统代理需要一次授权",
-             "macOS 拒绝了本程序的代理设置请求。需要手动执行 runbook 中的授权步骤,或暂时沿用原方案。"],
-    sysproxy_off: ["系统代理未生效",
-             "内核在运行,但系统代理未指向它。守护会自动纠正;持续未生效请查看详情。"],
-    kernel_down: ["内核未运行", "可点下方按钮启动;巡检会自动恢复接管。"],
-    all_dead: ["网络不可用,需要检查订阅",
-             "系统已自动尝试所有节点并持续重试。通常是订阅过期或流量用尽:更新订阅后系统会自动恢复,无需其他操作。"]
+  var HARD_DOWN = { kernel_down:1, all_dead:1, no_nodes:1 };
+  var BANNER = {
+    all_dead: function(d){ return "<b>通常是订阅过期或流量用尽</b>:更新订阅后自动恢复,服务商换 IP 无需操作。系统每 5 分钟自动重试。国内网络不受影响,微信/淘宝/银行照常可用。"; },
+    kernel_down: function(d){ return "<b>mihomo 内核未运行。</b>由 launchd 管理,可自动拉起,或点底部「重启内核」。国内网络不受影响。"; },
+    no_nodes: function(d){ return "<b>订阅中没有可用节点。</b>检查订阅链接是否有效,更新订阅后自动恢复。国内网络不受影响。"; }
   };
-
-  function rel(ts){
-    if(!ts) return "";
-    var s = (Date.now() - new Date(ts.replace(" ","T"))) / 1000;
-    if(isNaN(s) || s < 0) return "";
-    if(s < 90) return "刚刚";
-    if(s < 5400) return Math.round(s/60) + " 分钟前";
-    if(s < 172800) return Math.round(s/3600) + " 小时前";
-    return Math.round(s/86400) + " 天前";
-  }
 
   function render(s){
     last = s;
-    var d = s.derived, g = s.groups, t = s.traffic, p = s.patrol;
-    // 最新实测吞吐(取最近一次带 sweep 的事件)
-    sweep = null;
-    for(var i = p.events.length - 1; i >= 0; i--){
-      if(p.events[i].sweep){ sweep = p.events[i].sweep; break; }
+    var d = s.derived, g = s.groups, p = s.patrol, dir = s.direct || {};
+    // 最新实测吞吐:取最近一次带 sweep 的巡检事件
+    sweep = null; sweepAt = null;
+    for (var i = p.events.length - 1; i >= 0; i--) {
+      if (p.events[i].sweep) { sweep = p.events[i].sweep; sweepAt = hhmm(p.events[i].ts); break; }
     }
 
-    // ---------- 一级 ----------
-    var head = HEAD[d.reason] || (d.level === "green" ? HEAD.green : HEAD["pinned"]);
-    if(d.level === "green" && d.reason === "steady") head = HEAD.green;
-    $("st-text").textContent = head[0];
-    $("st").className = "state " + d.level;
-    $("lamp").className = "lamp " + d.level;
-    $("bar-dot").className = "dot " + d.level;
-    // 紧凑(更矮)只取决于状态,与是否展开详情无关——展开详情不得移动一级内容
+    // ---- 出口与模式 ----
+    var exitShort = g.pinned ? g.proxy_now_short : g.auto_now_short;
+    var exitNode = null;
+    for (var i = 0; i < nodes.length; i++) if (nodes[i].short === exitShort) exitNode = nodes[i];
+    var modeText = g.pinned ? "巡检钉住" : "常规模式自动选优";
+
+    // ---- 状态带 chips ----
+    var down = HARD_DOWN[d.reason] && d.level === "red";
+    var budgetOut = !!(p.last_event && p.last_event.type === "budget_exhausted");
+    var proxySt = d.reason === "status_unknown" ? "dim" : (down ? "bad" : "ok");
+    setChip($("chip-proxy"), $("chip-proxy-t"), proxySt,
+            proxySt === "ok" ? "代理通" : proxySt === "bad" ? "代理不通" : "代理…");
+    var dirSt = dir.ok === true ? "ok" : dir.ok === false ? "bad" : "dim";
+    setChip($("chip-direct"), $("chip-direct-t"), dirSt,
+            dirSt === "ok" ? "直连通" : dirSt === "bad" ? "直连不通" : "直连…");
+    $("strip-exit").innerHTML = "出口 <b>" + esc(nodeLabel(exitShort)) + "</b> · " + esc(modeText);
+
+    // ---- 状态带 vs 断网横幅 ----
+    var banner = $("banner");
+    if (down && BANNER[d.reason]) {
+      $("strip").hidden = true;
+      banner.hidden = false;
+      banner.innerHTML = BANNER[d.reason](d);
+    } else {
+      $("strip").hidden = false;
+      banner.hidden = true;
+      banner.innerHTML = "";
+    }
+
+    // ---- 一级结论(状态灯 + st-text) ----
+    var stText, stCls;
+    if (down) { stText = "代理不通"; stCls = "bad"; }
+    else if (d.reason === "status_unknown") { stText = "状态获取中"; stCls = "dim"; }
+    else if (d.reason === "sysproxy_off") { stText = "系统代理未生效"; stCls = "dim"; }
+    else if (d.reason === "sysproxy_requires_admin") { stText = "系统代理需要授权"; stCls = "dim"; }
+    else if (d.reason === "pinned") { stText = "已切换到最快节点"; stCls = "ok"; }
+    else { stText = "网络正常"; stCls = "ok"; }
+    $("st-text").textContent = stText;
+    $("st").className = "state " + stCls;
+    $("lamp").className = "lamp " + stCls;
+    $("l1-sub").textContent = down ? "" : modeText;
     $("win").classList.toggle("compact", d.level === "green");
 
-    if(d.reason === "kernel_down"){
-      $("l1-exit").innerHTML = "内核未在运行 · 上次出口 " + esc(g.proxy_now_short || "—");
-      $("l1-alive").textContent = "巡检每小时静默跳过,启动后自动恢复接管";
-      var nb = document.getElementById("open-btn");
+    // ---- 出口明细行 ----
+    var bits = [];
+    if (exitShort) {
+      bits.push("出口 <b>" + esc(nodeLabel(exitShort)) + "</b>");
+      if (exitNode) bits.push("健康 " + (exitNode.alive ? "<b class='num'>" + esc(exitNode.delay) + " ms</b>" : "<b>超时</b>"));
+      if (sweep && sweep[exitShort] > 0) bits.push("实测 <b class='num'>" + sweep[exitShort].toFixed(1) + "</b> Mbps" + (sweepAt ? "(" + esc(sweepAt) + ")" : ""));
+      $("l1-exit").innerHTML = bits.join(" · ");
     } else {
-      var mbps = (t.mbps > 0.05 ? t.mbps.toFixed(1) : (sweep && sweep[g.proxy_now_short] ? sweep[g.proxy_now_short].toFixed(1) : "—"));
-      var mode = g.pinned ? "已自动切换到最快节点" : "常规模式自动选优中";
-      $("l1-exit").innerHTML = "当前出口 <b>" + esc(g.proxy_now_short || "—") + "</b> · <b class='num'>" + esc(mbps) + "</b> Mbps";
-      $("l1-alive").textContent = "上次巡检 " + (rel(p.last_event && p.last_event.ts) || "—") + " · 系统自主运行中";
-    }
-    var noteEl = $("l1-note");
-    if(head[1]){ noteEl.hidden = false; noteEl.textContent = head[1]; } else { noteEl.hidden = true; }
-
-    // ---------- 二级 ----------
-    $("d-state").className = "d-state " + d.level;
-    $("d-state-text").textContent = head[0];
-    var expMap = {
-      steady: "出口高于达标线(15 Mbps),巡检每小时轻探测一次(约 4 MB),异常时自动升级为全量扫描并接管。",
-      pinned: "晚高峰中国→美国链路拥堵,常规模式(按延迟选节点)已选不出优解。巡检实测全部节点,把出口固定到吞吐最快的节点;拥堵消退并复测达标后,自动交还常规模式。",
-      kernel_down: "mihomo 内核未在运行。它由 launchd 管理,可自动/手动拉起;启动后巡检与系统代理都会自动恢复。",
-      all_dead: "所有节点实测不可用。请检查订阅是否过期、流量是否用尽(详见 runbook「节点全挂」一节);更新订阅后系统自动恢复。",
-      sysproxy_requires_admin: "macOS 拒绝了代理设置请求(networksetup 返回需要管理员权限)。执行 runbook 中的授权步骤后恢复。",
-      sysproxy_off: "系统代理当前未指向本内核。守护线程每 30 秒自动纠正。"
-    };
-    $("d-exp").textContent = expMap[d.reason] || head[1] || expMap.steady;
-
-    // 节点池
-    if(nodes.length && sweep){
-      var maxv = 1;
-      Object.keys(sweep).forEach(function(k){ maxv = Math.max(maxv, sweep[k]); });
-      var html = "";
-      var sorted = Object.keys(sweep).sort(function(a,b){ return sweep[b] - sweep[a]; });
-      sorted.forEach(function(n){
-        var v = sweep[n];
-        var tag = "";
-        if(n === g.proxy_now_short) tag = "巡检钉住";
-        else if(n === g.auto_now_short) tag = "常规模式待命";
-        var cls = v <= 0 ? "bad" : (n === g.proxy_now_short ? "warn" : "");
-        html += '<div class="node'+(v<=0?' dead':'')+'">'
-          + '<span class="name">'+esc(n)+'</span>'
-          + '<div class="nbar"><div class="nfill '+cls+'" style="width:'+Math.max(v/maxv*100,1.5)+'%"></div></div>'
-          + '<span class="mbps num">'+esc(v.toFixed(1))+'</span>'
-          + '<span class="tag">'+tag+'</span></div>';
-      });
-      $("nodes").innerHTML = html;
-    } else if(nodes.length){
-      $("nodes").innerHTML = '<div class="dim" style="font-size:12px">等待巡检实测(下次 '+p.next_run+',或点「立即巡检」)</div>';
+      $("l1-exit").textContent = "";
     }
 
-    // 决策时间线
-    if(p.events.length){
-      var tl = "";
-      p.events.slice(-8).reverse().forEach(function(e){
-        var f = SENTENCES[e.type];
-        tl += '<li><span class="t num">'+esc((e.ts||"").slice(5,16))+'</span><span>'+esc(f?f(e):e.type)+'</span></li>';
-      });
-      $("tl").innerHTML = tl;
-    }
+    // ---- 二级:节点总览表 ----
+    renderTable(g, exitShort);
+    $("th-sweep-at").textContent = sweepAt || "—";
+    $("tbl-note").textContent = tableNote();
 
-    // 配额 + 环境
-    var pct = Math.min(100, Math.round(p.cost_today_mb / p.quota_mb * 100));
-    $("quota").innerHTML = "今日探测 " + esc(p.cost_today_mb) + " / " + esc(p.quota_mb) + " MB"
-      + '<span class="qbar"><i style="width:'+pct+'%"></i></span>'
-      + " · 下次巡检 " + esc(p.next_run) + " · 代理端口 " + esc(s.kernel.port)
-      + (s.sysproxy.apply_mode === "trial-dry" ? " · 试运行(不动系统代理)" : "");
+    // ---- 直连卡 ----
+    var dc = $("direct-card");
+    dc.className = "direct " + (dirSt === "ok" ? "ok" : dirSt === "bad" ? "bad" : "");
+    $("direct-t").innerHTML = dirSt === "ok"
+      ? "<b>直连通</b>&nbsp;国内网络正常,微信/淘宝/银行照常"
+      : dirSt === "bad"
+        ? "<b>直连不通</b>&nbsp;检查 Wi-Fi/网线:国内网站也打不开时,与代理无关"
+        : "直连检测中…";
+    $("direct-why").textContent = dir.checked_at ? "不走代理 · " + dir.checked_at : "不走代理";
+
+    // ---- 机制行(弱化) ----
+    var mech = "今日测速额度 <b class='num'>" + esc(p.cost_today_mb) + "</b> / <b class='num'>" + esc(p.quota_mb) + "</b> MB";
+    if (budgetOut) mech += " · 已用完——<b>只影响测速排名,联网不受影响</b>,明早 00:00 自动恢复";
+    mech += " · 实时 " + esc((s.traffic.mbps || 0).toFixed(1)) + " Mbps · 下次巡检 " + esc(p.next_run) + " · 端口 " + esc(s.kernel.port);
+    $("mech").innerHTML = mech;
+
     postSize();
+  }
+
+  function setChip(chip, txt, st, label){
+    chip.className = "chip " + (st === "ok" ? "ok" : st === "bad" ? "bad" : "");
+    txt.textContent = label;
+  }
+  function shortName(n){ return (n || "").replace(/^.*@/, ""); }
+  // 展示用短标签:同域名下只留主机名 + 非 443 端口("c51s5" / "c51s1 :10858"),完整名在 title
+  function nodeLabel(n){
+    var s = shortName(n);
+    if (!s) return s;
+    var hostPort = s.split(":");
+    var port = hostPort[1] || "443";
+    var label = hostPort[0].split(".")[0];
+    return port === "443" ? label : label + " :" + port;
+  }
+
+  function renderTable(g, exitShort){
+    var body = $("rows");
+    if (!nodes.length) {
+      body.innerHTML = '<tr><td colspan="5" class="dim" style="font-size:12px">正在获取节点…</td></tr>';
+      return;
+    }
+    var rows = nodes.map(function(n){
+      var sv = sweep ? (sweep[n.short] != null ? sweep[n.short] : 0) : null;
+      return { n: n, sv: sv, label: nodeLabel(n.short) };
+    });
+    if (sweep) rows.sort(function(a,b){ return (b.sv||0) - (a.sv||0); });
+    else rows.sort(function(a,b){
+      if (a.n.alive !== b.n.alive) return a.n.alive ? -1 : 1;
+      return (a.n.delay||9999) - (b.n.delay||9999);
+    });
+    var maxv = 1;
+    rows.forEach(function(r){ if (r.sv > maxv) maxv = r.sv; });
+    var fastest = null;
+    rows.forEach(function(r){ if (r.sv != null && r.sv > 0 && r.n.alive && (!fastest || r.sv > fastest.sv)) fastest = r; });
+    var exitDead = null;
+    rows.forEach(function(r){ if (r.n.short === exitShort && !r.n.alive) exitDead = r; });
+
+    var html = "";
+    rows.forEach(function(r){
+      var alive = !!r.n.alive;
+      var isExit = r.n.short === exitShort;
+      var marks = "";
+      if (isExit) marks += '<span class="mark ' + (alive ? "use" : "down") + '">' + (alive ? "使用中" : "出口异常") + '</span>';
+      else if (fastest === r && exitShort) marks += '<span class="mark fast">最快</span>';
+      html += "<tr class='" + (alive ? "" : "dead ") + (isExit ? "current" : "") + "'>"
+        + '<td><span class="st ' + (alive ? "ok" : "bad") + '">' + (alive ? "通" : "断") + '</span></td>'
+        + '<td class="nm" title="' + esc(r.n.short) + '">' + esc(r.label) + '</td>'
+        + '<td class="r ms num">' + (alive ? (r.n.delay ? r.n.delay + "ms" : "—") : "超时") + '</td>'
+        + '<td><div class="cellbar">'
+        + (r.sv != null ? '<div class="rowbar"><i style="width:' + Math.max(r.sv/maxv*100, 2) + '%"></i></div><span class="mb num">' + r.sv.toFixed(1) + '</span>' : '<span class="ms">—</span>')
+        + '</div></td>'
+        + '<td class="r">' + marks + '</td></tr>';
+    });
+    body.innerHTML = html;
+  }
+
+  function tableNote(){
+    var healthAt = null;
+    nodes.forEach(function(n){ if (n.at && (!healthAt || n.at > healthAt)) healthAt = n.at; });
+    var parts = [];
+    parts.push("通断/延迟 = 健康检查" + (healthAt ? "(测于 " + healthAt + ")" : "(每 5 分钟一轮)"));
+    parts.push(sweepAt ? "实测 = 最近全量测速(" + sweepAt + "),拥堵/故障时才触发" : "实测 = 等待巡检(拥堵/故障时触发,或点「立即巡检」)");
+    return parts.join(" · ");
   }
 
   function poll(){
     fetch("/api/status").then(function(r){ return r.json(); }).then(render)
       .catch(function(){
         $("st-text").textContent = "桥接服务未响应";
-        $("st").className = "state red"; $("lamp").className = "lamp red";
+        $("st").className = "state bad"; $("lamp").className = "lamp bad";
+        postSize();
       });
   }
 
-  // provider 节点列表只在订阅更新(30min)时变化,降频到 60s 拉一次
+  // provider 健康数据(通断/延迟)随 mihomo 每 5 分钟一轮健康检查变化,降频到 60s 拉一次
   function pollProviders(){
     fetch("/api/mihomo/providers/proxies/JMS").then(function(r){ return r.json(); })
-      .then(function(d){ nodes = (d.proxies || []).map(function(p){ return (p.name||"").split("@").pop(); }); })
+      .then(function(d){
+        nodes = (d.proxies || []).map(function(p){
+          var h = (p.extra && p.extra["https://www.gstatic.com/generate_204"] && p.extra["https://www.gstatic.com/generate_204"].history) || p.history || [];
+          var lasth = h.length ? h[h.length - 1] : null;
+          return { name: p.name || "",
+                   short: (p.name || "").replace(/^.*@/, ""),
+                   alive: !!p.alive,
+                   delay: lasth ? (lasth.delay || 0) : 0,
+                   at: lasth && lasth.time ? String(lasth.time).slice(11,16) : null };
+        });
+        if (last) render(last);
+      })
       .catch(function(){});
   }
 
@@ -327,7 +405,7 @@
   $("open-btn").addEventListener("click", function(){
     open = !open;
     $("detail").classList.toggle("show", open);
-    this.textContent = open ? "收起详情 ▴" : "查看详情 ▾";
+    this.textContent = open ? "收起明细 ▴" : "节点明细与测速 ▾";
     postSize();  // 立即上报新尺寸,展开/收起由 popover 原生动画平滑完成
   });
   $("a-patrol").addEventListener("click", function(){ act("patrol-now", this); });

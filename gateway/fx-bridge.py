@@ -8,6 +8,7 @@
 - mihomo API 透明代理(GET|PUT /api/mihomo/*)
 - 动作(POST /api/actions/...):立即巡检、内核启停、交还常规模式、应用配置
 - 系统代理守护线程(30s):FX_SYSAPPLY=1 时写入 networksetup;=0 时仅监测(试运行期)
+- 直连检测线程(30s):国内 204 直连探测,面板"直连通"信号源,零代理流量
 
 性能与安全约定:
 - /proxies 与 /connections 由监测线程统一缓存,/api/status 纯读内存,请求路径零子进程
@@ -28,6 +29,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOME = os.path.expanduser("~")
@@ -79,6 +82,10 @@ CONTROL_LOCK = threading.RLock()
 WRITE_TOKEN = secrets.token_urlsafe(32)
 SYS = {"ok": None, "applied": False, "requires_admin": False,
        "error": None, "ts": 0}                                 # 30s 守护线程
+DIRECT = {"ok": None, "ts": 0}      # 直连(国内)连通性,30s 一测;面板"直连通"信号源
+# 国内 204 探测端点,依次尝试;经 ProxyHandler({}) 强制绕过任何代理,零代理流量
+DIRECT_PROBES = ["http://connect.rom.miui.com/generate_204",
+                 "http://223.5.5.5/generate_204"]
 
 
 def log(msg):
@@ -270,6 +277,35 @@ def guard_loop():
         time.sleep(30)
 
 
+# ---------- 直连检测线程(30s):面板"直连通"信号源 ----------
+
+def direct_check_once():
+    """对国内 204 端点直连探测;任何代理设置(env/系统)都不影响本探测。"""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    ok = False
+    for url in DIRECT_PROBES:
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with opener.open(req, timeout=5) as resp:
+                if resp.status == 204:
+                    ok = True
+                    break
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+            continue
+    DIRECT.update(ok=ok, ts=time.time())
+    return ok
+
+
+def direct_loop():
+    while True:
+        try:
+            direct_check_once()
+        except Exception as e:
+            DIRECT.update(ok=False, ts=time.time())
+            log(f"直连检测异常(下轮重试): {e}")
+        time.sleep(30)
+
+
 # ---------- 巡检事件 ----------
 
 def read_events(n=80):
@@ -357,6 +393,9 @@ def build_status():
         "patrol": {"last_event": last, "events": events[-20:],
                    "cost_today_mb": round(cost_today, 2), "quota_mb": QUOTA_MB,
                    "next_run": next_patrol_time()},
+        "direct": {"ok": DIRECT.get("ok"), "checked_at": (
+            f"{datetime.datetime.fromtimestamp(DIRECT['ts']):%H:%M:%S}"
+            if DIRECT.get("ts") else None)},
         "derived": {"level": level, "reason": reason},
     }
 
@@ -541,6 +580,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     threading.Thread(target=monitor_loop, daemon=True).start()
     threading.Thread(target=guard_loop, daemon=True).start()
+    threading.Thread(target=direct_loop, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", BRIDGE_PORT), Handler)
     log(f"fx-bridge 就绪 http://127.0.0.1:{BRIDGE_PORT} "
         f"(port={MIXED_PORT} sysapply={SYSAPPLY} events={EVENTS_PATH})")

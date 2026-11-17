@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>方案C v3 — 极简渐进:三行看完,细节藏起</title>
+<style>
+  :root{ color-scheme: light dark; }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; padding:24px 16px 48px;
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    background:light-dark(#e9edf3,#0b101a); color:light-dark(#1b2334,#e7edf6);
+    --surface:light-dark(#ffffff,#121927); --surface2:light-dark(#f3f5f9,#1a2333);
+    --track:light-dark(#e6eaf1,#1f2937); --border:light-dark(#dde3ec,#243145);
+    --text:light-dark(#1b2334,#e7edf6); --dim:light-dark(#5f6d84,#8fa0b8);
+    --accent:light-dark(#3457ff,#7d95ff);
+    --ok:light-dark(#15803d,#3ecf8e); --warn:light-dark(#b45309,#f2b13d); --bad:light-dark(#c2364a,#f3717f);
+  }
+  .num{ font-variant-numeric:tabular-nums; }
+  .dim{ color:var(--dim); }
+  h1{ font-size:16px; margin:0 0 4px; }
+  .lede{ font-size:12.5px; color:var(--dim); margin:0 0 20px; line-height:1.6; }
+  .row{ display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start; }
+  .col{ max-width:400px; }
+  .cap{ font-size:12px; font-weight:600; color:var(--dim); margin:0 0 8px; letter-spacing:.3px; }
+
+  .win{
+    width:400px; border:1px solid var(--border); border-radius:14px; background:var(--surface); overflow:hidden;
+    box-shadow:light-dark(0 1px 3px rgba(15,23,42,.06),0 1px 3px rgba(0,0,0,.45));
+  }
+
+  /* 主区:一个大灯 + 一句话 */
+  .hero{ padding:22px 20px 16px; text-align:center; }
+  .biglamp{ width:14px; height:14px; border-radius:99px; display:inline-block; margin-right:10px; vertical-align:-1px; }
+  .biglamp.ok{ background:var(--ok); box-shadow:0 0 0 5px color-mix(in srgb,var(--ok) 16%,transparent); }
+  .biglamp.bad{ background:var(--bad); box-shadow:0 0 0 5px color-mix(in srgb,var(--bad) 16%,transparent); }
+  .hero .t{ font-size:21px; font-weight:700; }
+  .hero .t.ok{ color:var(--ok); } .hero .t.bad{ color:var(--bad); }
+  .hero .s{ font-size:12px; color:var(--dim); margin-top:7px; line-height:1.6; }
+
+  /* 三个信息 chip:代理 / 直连 / 选路 */
+  .chips{ display:flex; gap:7px; padding:0 16px 14px; }
+  .chip{
+    flex:1; border:1px solid var(--border); border-radius:10px; background:var(--surface2); padding:8px 10px; min-width:0;
+  }
+  .chip .k{ font-size:10px; color:var(--dim); font-weight:600; letter-spacing:.4px; display:flex; align-items:center; gap:5px; }
+  .chip .k .d{ width:6px; height:6px; border-radius:99px; }
+  .chip .k .d.ok{ background:var(--ok); } .chip .k .d.bad{ background:var(--bad); }
+  .chip .v{ font-size:12.5px; font-weight:600; margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .chip .n{ font-size:10px; color:var(--dim); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+  .expand{
+    display:block; width:100%; padding:9px 0; border:none; border-top:1px solid var(--border);
+    background:var(--surface); color:var(--accent); font-size:12px; font-weight:600; cursor:pointer;
+  }
+
+  /* 展开区(示意展开后的样子) */
+  .detail{ border-top:1px solid var(--border); background:var(--surface2); padding:12px 16px 12px; }
+  .dtitle{ font-size:11px; color:var(--dim); font-weight:600; letter-spacing:.4px; margin:10px 0 6px; }
+  .dtitle:first-child{ margin-top:0; }
+  .nrow{ display:flex; align-items:center; gap:8px; font-size:11.5px; padding:3px 0; }
+  .nrow .d{ width:7px; height:7px; border-radius:99px; flex:none; }
+  .nrow .d.ok{ background:var(--ok); } .nrow .d.bad{ background:var(--bad); }
+  .nrow .nm{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .nrow .bar{ flex:1; height:5px; border-radius:99px; background:var(--track); overflow:hidden; }
+  .nrow .bar i{ display:block; height:100%; border-radius:99px; background:var(--ok); }
+  .nrow.bad .nm,.nrow.bad .r2{ color:var(--bad); }
+  .nrow.bad .bar i{ background:var(--bad); }
+  .nrow .r1{ width:52px; text-align:right; color:var(--dim); flex:none; font-size:11px; }
+  .nrow .r2{ width:58px; text-align:right; font-weight:600; flex:none; }
+  .dnote{ font-size:10.5px; color:var(--dim); line-height:1.6; margin-top:8px; }
+
+  .mech{ border-top:1px solid var(--border); padding:9px 16px 12px; font-size:10.5px; color:var(--dim); line-height:1.6; }
+
+  .anno{
+    max-width:840px; margin-top:26px; border:1.5px dashed var(--border); border-radius:12px; padding:14px 18px;
+    font-size:12.5px; line-height:1.7; color:var(--dim);
+  }
+  .anno h2{ font-size:13px; color:var(--text); margin:0 0 8px; }
+  .anno b{ color:var(--text); }
+  .anno ul{ margin:6px 0 0; padding-left:18px; }
+  .anno li{ margin:3px 0; }
+  code{ background:var(--surface2); border:1px solid var(--border); border-radius:5px; padding:0 5px; font-size:11.5px; }
+</style>
+</head>
+<body>
+<h1>方案C v3 — 极简渐进:三行看完,细节藏起</h1>
+<p class="lede">给"完全不想研究"的用户:一屏只有<b>一个大状态 + 三张信息卡(代理/直连/选路)</b>,每个卡两行字。所有节点明细、测速、巡检细节都收进"展开"。这是三个方案里弹窗最矮、最不吓人的一版。</p>
+
+<div class="row">
+  <!-- ============ 正常态 ============ -->
+  <div class="col">
+    <p class="cap">状态一 · 全部正常(今天 15:19 实况)</p>
+    <div class="win">
+      <div class="hero">
+        <span class="t ok"><span class="biglamp ok"></span>网络正常</span>
+        <div class="s">外网、国内网站都可以正常访问</div>
+      </div>
+      <div class="chips">
+        <div class="chip">
+          <div class="k"><span class="d ok"></span>代理</div>
+          <div class="v">通 · 走 c51s5</div>
+          <div class="n">延迟 159ms</div>
+        </div>
+        <div class="chip">
+          <div class="k"><span class="d ok"></span>直连</div>
+          <div class="v">通</div>
+          <div class="n">国内网络正常</div>
+        </div>
+        <div class="chip">
+          <div class="k"><span class="d ok"></span>节点</div>
+          <div class="v">6 / 6 在线</div>
+          <div class="n">最快 c51s5 · 30.4M</div>
+        </div>
+      </div>
+      <button class="expand">节点明细与测速 ▾</button>
+      <div class="detail">
+        <div class="dtitle">节点通断与实测(通断测于 15:19 · 实测于 02:14)</div>
+        <div class="nrow"><span class="d ok"></span><span class="nm">c51s5 :443</span><div class="bar"><i style="width:100%"></i></div><span class="r1 num">159ms</span><span class="r2 num">30.4</span></div>
+        <div class="nrow"><span class="d ok"></span><span class="nm">c51s3 :443</span><div class="bar"><i style="width:94%"></i></div><span class="r1 num">185ms</span><span class="r2 num">28.6</span></div>
+        <div class="nrow"><span class="d ok"></span><span class="nm">c51s1 :10858</span><div class="bar"><i style="width:93%"></i></div><span class="r1 num">391ms</span><span class="r2 num">28.3</span></div>
+        <div class="nrow"><span class="d ok"></span><span class="nm">c51s4 :443</span><div class="bar"><i style="width:86%"></i></div><span class="r1 num">201ms</span><span class="r2 num">26.0</span></div>
+        <div class="nrow"><span class="d ok"></span><span class="nm">c51s2 :443</span><div class="bar"><i style="width:84%"></i></div><span class="r1 num">213ms</span><span class="r2 num">25.4</span></div>
+        <div class="nrow"><span class="d ok"></span><span class="nm">c51s801 :443</span><div class="bar"><i style="width:81%"></i></div><span class="r1 num">213ms</span><span class="r2 num">24.5</span></div>
+        <div class="dnote">第一列小灯 = 通断;横条 = 实测速度;右两列 = 健康延迟 / 最近实测 Mbps。当前出口 c51s5 为实测最快,系统会自动保持最优。</div>
+      </div>
+      <div class="mech">今日测速额度已用完(248/250 MB)· 只影响测速,联网不受影响,明早自动恢复 · 下次巡检 16:10</div>
+    </div>
+  </div>
+
+  <!-- ============ 断网态 ============ -->
+  <div class="col">
+    <p class="cap">状态二 · 代理不通(今天上午 11:20–14:40 实况)</p>
+    <div class="win">
+      <div class="hero">
+        <span class="t bad"><span class="biglamp bad"></span>外网暂时不可用</span>
+        <div class="s">6 个节点全部无响应,正在自动重试<br>国内网站不受影响,可正常使用微信、淘宝等</div>
+      </div>
+      <div class="chips">
+        <div class="chip">
+          <div class="k"><span class="d bad"></span>代理</div>
+          <div class="v" style="color:var(--bad)">不通</div>
+          <div class="n">11:20 起中断</div>
+        </div>
+        <div class="chip">
+          <div class="k"><span class="d ok"></span>直连</div>
+          <div class="v">通</div>
+          <div class="n">国内网络正常</div>
+        </div>
+        <div class="chip">
+          <div class="k"><span class="d bad"></span>节点</div>
+          <div class="v" style="color:var(--bad)">0 / 6 在线</div>
+          <div class="n">下次重试 16:10</div>
+        </div>
+      </div>
+      <button class="expand">哪个节点挂了?怎么办? ▾</button>
+      <div class="detail">
+        <div class="dtitle">节点通断(测于 14:15)</div>
+        <div class="nrow bad"><span class="d bad"></span><span class="nm">c51s1 :10858</span><div class="bar"><i style="width:2%"></i></div><span class="r1">超时</span><span class="r2 num">0.0</span></div>
+        <div class="nrow bad"><span class="d bad"></span><span class="nm">c51s2 :443</span><div class="bar"><i style="width:2%"></i></div><span class="r1">超时</span><span class="r2 num">0.0</span></div>
+        <div class="nrow bad"><span class="d bad"></span><span class="nm">c51s3 :443</span><div class="bar"><i style="width:2%"></i></div><span class="r1">超时</span><span class="r2 num">0.0</span></div>
+        <div class="nrow bad"><span class="d bad"></span><span class="nm">c51s4 :443</span><div class="bar"><i style="width:2%"></i></div><span class="r1">超时</span><span class="r2 num">0.0</span></div>
+        <div class="nrow bad"><span class="d bad"></span><span class="nm">c51s5 :443</span><div class="bar"><i style="width:2%"></i></div><span class="r1">超时</span><span class="r2 num">0.0</span></div>
+        <div class="nrow bad"><span class="d bad"></span><span class="nm">c51s801 :443</span><div class="bar"><i style="width:2%"></i></div><span class="r1">超时</span><span class="r2 num">0.0</span></div>
+        <div class="dnote"><b style="color:var(--text)">怎么办:</b>通常是订阅过期或流量用尽——到机场后台续费/更新订阅后,系统会自动恢复;服务商更换服务器 IP 时无需操作,自动等恢复。</div>
+      </div>
+      <div class="mech">今日测速额度已用完 · 巡检继续监控连通性,发现恢复即刻自动接回</div>
+    </div>
+  </div>
+</div>
+
+<div class="anno">
+  <h2>设计说明</h2>
+  <ul>
+    <li><b>与A/B的区别</b>:默认不展示任何表格——主区一句话 + 三张卡就是全部必读信息(<b>代理通不通 / 直连通不通 / 节点几个在线、选了谁</b>);明细全部收进展开区,适合非技术朋友。</li>
+    <li><b>断网文案走"安抚"路线</b>:主标题直接说结论("外网暂时不可用"),副标题立刻给出两条定心丸(国内不受影响 / 在自动重试),展开后才解释原因与自救步骤。</li>
+    <li><b>高度最矮</b>:绿态默认约 190px(和现网绿态接近);展开 +170px。A/B 常驻通断网格,本方案把通断压缩成 "6 / 6 在线" 一个数字,想要明细再点。</li>
+    <li><b>数据来源</b>:与A/B一致;仅"直连通"需桥里新增轻量直连探测。</li>
+  </ul>
+</div>
+</body>
+</html>

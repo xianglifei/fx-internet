@@ -185,6 +185,35 @@ class Regressions(unittest.TestCase):
         self.assertIn('ALLOW_MUTATIONS="${FX_ALLOW_MUTATIONS:-0}"', source)
         self.assertNotIn("page.click('#a-patrol')", source)
 
+    def test_direct_probe_204_and_failures(self):
+        class Resp204:
+            status = 204
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        class Opener204:
+            def open(self, req, timeout=None): return Resp204()
+        class OpenerFail:
+            def open(self, req, timeout=None): raise b.urllib.error.URLError('timeout')
+        with patch.object(b.urllib.request, 'build_opener', return_value=Opener204()):
+            self.assertTrue(b.direct_check_once())
+            self.assertTrue(b.DIRECT['ok'])
+            self.assertGreater(b.DIRECT['ts'], 0)
+        with patch.object(b.urllib.request, 'build_opener', return_value=OpenerFail()):
+            self.assertFalse(b.direct_check_once())
+            self.assertFalse(b.DIRECT['ok'])
+
+    def test_status_payload_carries_direct_and_ui_keeps_contract(self):
+        payload = b.build_status()
+        self.assertIn('direct', payload)
+        self.assertIn('ok', payload['direct'])
+        ui = (ROOT/'gateway/ui/index.html').read_text()
+        # 方案B:状态带双 chip + 直连卡 + 机制行大白话文案
+        for needle in ('chip-proxy', 'chip-direct', 'direct-card', '只影响测速排名,联网不受影响'):
+            self.assertIn(needle, ui)
+        # selftest 依赖的一级区契约必须保留:400 宽、150/210 高、st-text、展开按钮
+        for needle in ('body-l1', 'id="st-text"', 'id="open-btn"', 'width:min(400px'):
+            self.assertIn(needle, ui)
+
 
 if __name__ == '__main__':
     unittest.main()
