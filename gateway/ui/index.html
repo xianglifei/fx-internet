@@ -5,9 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>fx-internet</title>
 <style>
-  /* 方案B v3「节点总览表」:顶部状态带(代理/直连/出口) + 节点总览表(通断/延迟/实测/标记)
-     + 直连卡;巡检/额度等机制细节弱化置底。信息优先级:
-     1) 代理通不通(谁在线、当前走谁) 2) 直连通不通 3) 谁最快、上次何时实测 */
+  /* 方案B v4「节点总览表·平铺版」:明细常驻不折叠;宽度自适应(跟随内容,460~720 限幅)。
+     信息优先级:1) 代理通不通(谁在线、当前走谁) 2) 直连通不通 3) 谁最快、上次何时实测;
+     巡检/额度等机制细节弱化置底。
+     尺寸反馈环安全:宽度由内容定(max-content,不依赖视口),高度随内容,panelSize 上报
+     后弹窗贴合——视口尺寸不反向影响布局,无死锁。 */
   :root{ color-scheme: light dark; }
   *{ box-sizing:border-box; }
   html,body{ margin:0; padding:0; }
@@ -32,23 +34,17 @@
   .dim{ color:var(--dim); }
 
   .win{
-    width:min(400px,100%);
+    width:max-content; min-width:460px; max-width:720px;
     border:1px solid var(--border); border-radius:14px; background:var(--surface);
     overflow:hidden; box-shadow:light-dark(0 1px 3px rgba(15,23,42,.06),0 1px 3px rgba(0,0,0,.45));
   }
   body.embedded{ background:transparent; padding:0; justify-content:flex-start; }
   body.embedded .win{ border:none; box-shadow:none; }
 
-  /* 一级区:绿态 150 / 其余 210(selftest 断言依赖) */
-  .body-l1{
-    height:210px; display:flex; flex-direction:column;
-  }
-  .win.compact .body-l1{ height:150px; }
-
   /* 顶部状态带:两个最重要的信号(代理/直连)+ 当前出口 */
   .strip{
-    display:flex; align-items:center; gap:6px; padding:10px 14px;
-    background:var(--surface2); border-bottom:1px solid var(--border); flex:none;
+    display:flex; align-items:center; gap:6px; padding:10px 16px;
+    background:var(--surface2); border-bottom:1px solid var(--border);
   }
   .chip{
     display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:99px;
@@ -60,14 +56,14 @@
   .chip.bad{ color:var(--bad); border-color:color-mix(in srgb,var(--bad) 40%,var(--border)); }
   .chip.bad .d{ background:var(--bad); }
   .strip-exit{
-    margin-left:auto; font-size:11px; color:var(--dim); min-width:0;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    margin-left:auto; padding-left:12px; font-size:11px; color:var(--dim);
+    min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
   .strip-exit b{ color:var(--text); font-weight:600; }
 
-  /* 断网横幅:代理不通时替换状态带说明区 */
+  /* 断网横幅:代理不通时替换状态带说明区(文本限宽换行,不撑宽卡片) */
   .banner{
-    padding:10px 14px; flex:none;
+    padding:10px 16px; max-width:560px;
     background:color-mix(in srgb,var(--bad) 10%,var(--surface2));
     border-bottom:1px solid color-mix(in srgb,var(--bad) 30%,var(--border));
     font-size:11.5px; color:var(--dim); line-height:1.55;
@@ -75,47 +71,34 @@
   .banner b{ color:var(--text); }
 
   /* 主区:一句结论 + 出口明细 */
-  .hero{ flex:1; padding:10px 16px 12px; display:flex; flex-direction:column; justify-content:space-evenly; min-height:0; }
+  .hero{ padding:12px 16px 10px; }
   .state{ display:flex; align-items:center; gap:9px; font-size:19px; font-weight:700; }
   .lamp{ width:12px; height:12px; border-radius:99px; flex:none; background:var(--dim); }
   .lamp.ok{ background:var(--ok); box-shadow:0 0 0 4px color-mix(in srgb,var(--ok) 16%,transparent); }
   .lamp.bad{ background:var(--bad); box-shadow:0 0 0 4px color-mix(in srgb,var(--bad) 16%,transparent); }
   .state.ok{ color:var(--ok); } .state.bad{ color:var(--bad); } .state.dim{ color:var(--dim); }
   .herosub{ font-size:11.5px; color:var(--dim); font-weight:500; }
-  .exitline{ font-size:12px; color:var(--dim); }
+  .exitline{ margin-top:8px; font-size:12px; color:var(--dim); max-width:560px; }
   .exitline b{ color:var(--text); font-weight:600; }
 
-  .btn{
-    display:inline-flex; align-items:center; gap:6px; height:26px; padding:0 10px; border-radius:8px;
-    border:1px solid var(--border); background:var(--surface); font-size:12px; color:var(--text);
-    cursor:pointer;
-  }
-  .btn.primary{ background:var(--accent); border-color:transparent; color:light-dark(#fff,#0b101a); }
-  .btn.ghost{ border-color:transparent; background:transparent; color:var(--dim); }
-  .btn.ghost:hover{ color:var(--text); }
-  .btn:disabled{ opacity:.5; cursor:default; }
-  .openbtn{ align-self:center; margin-top:4px; }
-
-  /* 二级:节点总览表(用户展开) */
-  .detail{ border-top:1px solid var(--border); display:none; }
-  .detail.show{ display:block; }
-  .tblwrap{ padding:10px 14px 2px; }
+  /* 节点总览表(常驻平铺) */
+  .tblwrap{ padding:10px 16px 2px; }
   .tbl{ width:100%; border-collapse:collapse; }
   .tbl th{
     font-size:10px; color:var(--dim); font-weight:600; letter-spacing:.4px; text-align:left;
-    padding:4px 5px; border-bottom:1px solid var(--border); white-space:nowrap;
+    padding:4px 6px; border-bottom:1px solid var(--border); white-space:nowrap;
   }
   .tbl th.r,.tbl td.r{ text-align:right; }
-  .tbl td{ padding:6px 5px; border-bottom:1px solid var(--track); font-size:12px; vertical-align:middle; }
+  .tbl td{ padding:6px 6px; border-bottom:1px solid var(--track); font-size:12px; vertical-align:middle; }
   .tbl tr:last-child td{ border-bottom:none; }
   .st{ display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; white-space:nowrap; }
   .st::before{ content:''; width:7px; height:7px; border-radius:99px; }
   .st.ok{ color:var(--ok); } .st.ok::before{ background:var(--ok); }
   .st.bad{ color:var(--bad); } .st.bad::before{ background:var(--bad); }
-  .nm{ font-weight:500; max-width:112px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .nm{ font-weight:500; white-space:nowrap; }
   .ms{ color:var(--dim); white-space:nowrap; }
   .cellbar{ display:flex; align-items:center; gap:6px; }
-  .rowbar{ position:relative; width:64px; height:5px; border-radius:99px; background:var(--track); overflow:hidden; flex:none; }
+  .rowbar{ position:relative; width:72px; height:5px; border-radius:99px; background:var(--track); overflow:hidden; flex:none; }
   .rowbar i{ position:absolute; inset:0 auto 0 0; border-radius:99px; background:var(--ok); }
   .mb{ font-weight:600; white-space:nowrap; }
   tr.dead .nm,tr.dead .ms,tr.dead .mb{ color:var(--bad); }
@@ -125,66 +108,71 @@
   .mark.use{ background:color-mix(in srgb,var(--accent) 14%,transparent); color:var(--accent); font-weight:600; }
   .mark.fast{ background:color-mix(in srgb,var(--ok) 14%,transparent); color:var(--ok); font-weight:600; }
   .mark.down{ background:color-mix(in srgb,var(--bad) 14%,transparent); color:var(--bad); font-weight:600; }
-  .tbl-note{ font-size:10.5px; color:var(--dim); margin:7px 2px 0; line-height:1.55; }
+  .tbl-note{ font-size:10.5px; color:var(--dim); margin:7px 2px 0; line-height:1.55; max-width:560px; }
 
   /* 直连卡 */
   .direct{
-    margin:10px 14px 0; display:flex; align-items:center; gap:8px; padding:8px 11px; border-radius:9px;
+    margin:10px 16px 0; display:flex; align-items:center; gap:8px; padding:8px 11px; border-radius:9px;
     border:1px solid var(--border); background:var(--surface2); font-size:11.5px;
   }
   .direct .d{ width:7px; height:7px; border-radius:99px; background:var(--dim); flex:none; }
   .direct.ok .d{ background:var(--ok); } .direct.bad .d{ background:var(--bad); }
   .direct b{ font-weight:600; }
-  .direct .why{ margin-left:auto; color:var(--dim); font-size:10.5px; white-space:nowrap; }
+  .direct .why{ margin-left:auto; padding-left:10px; color:var(--dim); font-size:10.5px; white-space:nowrap; }
 
-  /* 机制细节:弱化置底 */
+  /* 机制细节:弱化置底(文本限宽换行,不撑宽卡片) */
   .mech{
-    margin-top:10px; padding:9px 14px 10px; background:var(--surface2); border-top:1px solid var(--border);
-    font-size:10.5px; color:var(--dim); line-height:1.6;
+    margin-top:10px; padding:9px 16px 10px; background:var(--surface2); border-top:1px solid var(--border);
+    font-size:10.5px; color:var(--dim); line-height:1.6; max-width:560px;
   }
   .mech b{ color:var(--text); font-weight:600; }
   .foot{ display:flex; align-items:center; gap:4px; padding:8px 10px 12px; border-top:1px solid var(--border); }
   .foot .btn{ height:24px; font-size:11px; padding:0 8px; }
+  .btn{
+    display:inline-flex; align-items:center; gap:6px; height:26px; padding:0 10px; border-radius:8px;
+    border:1px solid var(--border); background:var(--surface); font-size:12px; color:var(--text);
+    cursor:pointer;
+  }
+  .btn.ghost{ border-color:transparent; background:transparent; color:var(--dim); }
+  .btn.ghost:hover{ color:var(--text); }
+  .btn:disabled{ opacity:.5; cursor:default; }
 </style>
 </head>
 <body>
-<div class="win compact" id="win">
-  <div class="body-l1" id="l1">
-    <div class="strip" id="strip">
-      <span class="chip" id="chip-proxy"><span class="d"></span><span id="chip-proxy-t">代理…</span></span>
-      <span class="chip" id="chip-direct"><span class="d"></span><span id="chip-direct-t">直连…</span></span>
-      <span class="strip-exit" id="strip-exit"></span>
-    </div>
-    <div class="banner" id="banner" hidden></div>
-    <div class="hero">
-      <div class="state" id="st"><span class="lamp" id="lamp"></span><span id="st-text">连接中…</span><span class="herosub" id="l1-sub"></span></div>
-      <div class="exitline" id="l1-exit"></div>
-      <button class="btn ghost openbtn" id="open-btn">节点明细与测速 ▾</button>
-    </div>
+<div class="win" id="win">
+  <div class="strip" id="strip">
+    <span class="chip" id="chip-proxy"><span class="d"></span><span id="chip-proxy-t">代理…</span></span>
+    <span class="chip" id="chip-direct"><span class="d"></span><span id="chip-direct-t">直连…</span></span>
+    <span class="strip-exit" id="strip-exit"></span>
+  </div>
+  <div class="banner" id="banner" hidden></div>
+
+  <div class="hero">
+    <div class="state" id="st"><span class="lamp" id="lamp"></span><span id="st-text">连接中…</span><span class="herosub" id="l1-sub"></span></div>
+    <div class="exitline" id="l1-exit"></div>
   </div>
 
-  <div class="detail" id="detail">
-    <div class="tblwrap">
-      <table class="tbl">
-        <thead><tr><th>状态</th><th>节点</th><th class="r">延迟</th><th>实测(<span id="th-sweep-at">—</span>)</th><th class="r">标记</th></tr></thead>
-        <tbody id="rows"><tr><td colspan="5" class="dim" style="font-size:12px">正在获取节点…</td></tr></tbody>
-      </table>
-      <div class="tbl-note" id="tbl-note"></div>
-    </div>
-    <div class="direct" id="direct-card"><span class="d"></span><span id="direct-t">直连检测中…</span><span class="why" id="direct-why"></span></div>
-    <div class="mech" id="mech"></div>
-    <div class="foot">
-      <button class="btn ghost" id="a-patrol">立即巡检</button>
-      <button class="btn ghost" id="a-handoff">交还常规</button>
-      <button class="btn ghost" id="a-restart">重启内核</button>
-    </div>
+  <div class="tblwrap">
+    <table class="tbl">
+      <thead><tr><th>状态</th><th>节点</th><th class="r">延迟</th><th>实测(<span id="th-sweep-at">—</span>)</th><th class="r">标记</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="5" class="dim" style="font-size:12px">正在获取节点…</td></tr></tbody>
+    </table>
+    <div class="tbl-note" id="tbl-note"></div>
+  </div>
+
+  <div class="direct" id="direct-card"><span class="d"></span><span id="direct-t">直连检测中…</span><span class="why" id="direct-why"></span></div>
+  <div class="mech" id="mech"></div>
+  <div class="foot">
+    <button class="btn ghost" id="a-patrol">立即巡检</button>
+    <button class="btn ghost" id="a-handoff">交还常规</button>
+    <button class="btn ghost" id="a-restart">重启内核</button>
   </div>
 </div>
 
 <script>
 (function(){
   var $ = function(id){ return document.getElementById(id); };
-  var open = false, last = null, sweep = null, sweepAt = null, nodes = [], lastPosted = "";
+  var last = null, sweep = null, sweepAt = null, nodes = [], lastPosted = "";
   // UI 版本(桥按文件内容哈希注入):菜单栏 App 页面常驻不重载,据此自查过期自动刷新
   var UI_VERSION = "__UI_VERSION__";
   setInterval(function(){
@@ -272,7 +260,6 @@
     $("st").className = "state " + stCls;
     $("lamp").className = "lamp " + stCls;
     $("l1-sub").textContent = down ? "" : modeText;
-    $("win").classList.toggle("compact", d.level === "green");
 
     // ---- 出口明细行 ----
     var bits = [];
@@ -285,7 +272,7 @@
       $("l1-exit").textContent = "";
     }
 
-    // ---- 二级:节点总览表 ----
+    // ---- 节点总览表(常驻平铺) ----
     renderTable(g, exitShort);
     $("th-sweep-at").textContent = sweepAt || "—";
     $("tbl-note").textContent = tableNote();
@@ -343,8 +330,6 @@
     rows.forEach(function(r){ if (r.sv > maxv) maxv = r.sv; });
     var fastest = null;
     rows.forEach(function(r){ if (r.sv != null && r.sv > 0 && r.n.alive && (!fastest || r.sv > fastest.sv)) fastest = r; });
-    var exitDead = null;
-    rows.forEach(function(r){ if (r.n.short === exitShort && !r.n.alive) exitDead = r; });
 
     var html = "";
     rows.forEach(function(r){
@@ -410,12 +395,6 @@
       .catch(function(e){ $("st-text").textContent = e.message || "操作失败"; });
   }
 
-  $("open-btn").addEventListener("click", function(){
-    open = !open;
-    $("detail").classList.toggle("show", open);
-    this.textContent = open ? "收起明细 ▴" : "节点明细与测速 ▾";
-    postSize();  // 立即上报新尺寸,展开/收起由 popover 原生动画平滑完成
-  });
   $("a-patrol").addEventListener("click", function(){ act("patrol-now", this); });
   $("a-handoff").addEventListener("click", function(){ act("handoff-auto", this); });
   $("a-restart").addEventListener("click", function(){ act("kernel-restart", this); });

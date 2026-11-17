@@ -207,12 +207,17 @@ class Regressions(unittest.TestCase):
         self.assertIn('direct', payload)
         self.assertIn('ok', payload['direct'])
         ui = (ROOT/'gateway/ui/index.html').read_text()
-        # 方案B:状态带双 chip + 直连卡 + 机制行大白话文案
+        # 方案B平铺版:状态带双 chip + 直连卡 + 机制行大白话文案
         for needle in ('chip-proxy', 'chip-direct', 'direct-card', '只影响测速排名,联网不受影响'):
             self.assertIn(needle, ui)
-        # selftest 依赖的一级区契约必须保留:400 宽、150/210 高、st-text、展开按钮
-        for needle in ('body-l1', 'id="st-text"', 'id="open-btn"', 'width:min(400px'):
-            self.assertIn(needle, ui)
+        # 明细平铺常驻(无折叠按钮)+ 宽度自适应(内容定宽,460~720 限幅)
+        self.assertNotIn('open-btn', ui)
+        self.assertIn('id="st-text"', ui)
+        self.assertIn('width:max-content', ui)
+        self.assertIn('min-width:460px', ui)
+        self.assertIn('max-width:720px', ui)
+        # 菜单栏 App 页面自更新契约(版本占位符由桥注入)
+        self.assertIn('__UI_VERSION__', ui)
 
 
 if __name__ == '__main__':

@@ -74,7 +74,7 @@ else
   ok "动作测试跳过(默认只读)"
 fi
 
-echo "== 3. 界面(playwright 实测,统一紧凑 400 宽:绿=150 高,黄/红=210 高) =="
+echo "== 3. 界面(playwright 实测,平铺明细 + 宽度自适应 460~720,弹窗尺寸由 panelSize 跟随) =="
 cat > /tmp/fx-selftest-ui.cjs << 'EOF'
 const { chromium } = require('playwright');
 (async () => {
@@ -85,20 +85,17 @@ const { chromium } = require('playwright');
   const out = await page.evaluate(async () => {
     const s = await fetch('/api/status').then(r => r.json());
     const win = document.querySelector('.win').getBoundingClientRect();
-    const l1 = document.querySelector('.body-l1').getBoundingClientRect();
-    return { level: s.derived.level, w: win.width, l1h: l1.height,
-             state: document.getElementById('st-text').textContent };
+    return { level: s.derived.level, w: win.width,
+             state: document.getElementById('st-text').textContent,
+             rows: document.querySelectorAll('#rows tr').length,
+             mech: document.getElementById('mech').textContent,
+             hasToggle: !!document.getElementById('open-btn') };
   });
   const checks = [];
-  checks.push(['统一紧凑宽 400(当前态 ' + out.level + ')', Math.abs(out.w - 400) < 2]);
-  const expH = out.level === 'green' ? 150 : 210;
-  checks.push(['[' + out.level + '] 一级内容区高 ' + expH, Math.abs(out.l1h - expH) < 2]);
+  checks.push(['宽度自适应在 460~720(当前 ' + Math.round(out.w) + ',态 ' + out.level + ')', out.w >= 460 && out.w <= 720]);
   checks.push(['状态文案非空: ' + out.state, out.state.length > 1]);
-  await page.click('#open-btn');
-  await page.waitForTimeout(500);
-  const box2 = await page.evaluate(() => document.querySelector('.win').getBoundingClientRect());
-  checks.push(['展开详情后宽度仍为 400(仅高度增长)', Math.abs(box2.width - 400) < 2]);
-  checks.push(['展开详情后高度增加', box2.height > out.l1h + 100]);
+  checks.push(['明细平铺常驻:节点表 ' + out.rows + ' 行(无折叠按钮)', out.rows >= 1 && !out.hasToggle]);
+  checks.push(['机制行非空(额度文案): ' + out.mech.slice(0, 24) + '…', out.mech.length > 10]);
   await browser.close();
   console.log(JSON.stringify({ checks }));
 })().catch(e => { console.error(JSON.stringify({ fatal: e.message })); process.exit(1); });
