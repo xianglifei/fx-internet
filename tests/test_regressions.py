@@ -216,6 +216,9 @@ class Regressions(unittest.TestCase):
         # 机制细节收进测速历史子页:入口按钮 + 额度大白话文案 + 倒序历史
         for needle in ('a-history', 'h-quota', '只影响测速排名,联网不受影响', '/api/events'):
             self.assertIn(needle, ui)
+        # 操作按钮按需出现:交还改名「恢复自动选优」(默认 hidden,钉住时显示);重启内核默认 hidden
+        self.assertIn('id="a-handoff" hidden>恢复自动选优', ui)
+        self.assertIn('id="a-restart" hidden>重启内核', ui)
         # 菜单栏 App 页面自更新契约(版本占位符由桥注入)
         self.assertIn('__UI_VERSION__', ui)
 

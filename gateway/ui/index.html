@@ -33,6 +33,9 @@
   }
   .num{ font-variant-numeric:tabular-nums; }
   .dim{ color:var(--dim); }
+  /* hidden 属性必须赢过任何 display 声明(.btn 等设了 display:inline-flex,
+     否则 hidden 的按钮仍会渲染出来) */
+  [hidden]{ display:none !important; }
 
   .win{
     width:max-content; min-width:460px; max-width:720px;
@@ -157,9 +160,9 @@
 
     <div class="foot">
       <button class="btn ghost" id="a-patrol">立即巡检</button>
-      <button class="btn ghost" id="a-handoff">交还常规</button>
-      <button class="btn ghost" id="a-restart">重启内核</button>
+      <button class="btn ghost" id="a-handoff" hidden>恢复自动选优</button>
       <button class="btn ghost push" id="a-history">测速历史</button>
+      <button class="btn ghost" id="a-restart" hidden>重启内核</button>
     </div>
   </div>
 
@@ -264,6 +267,12 @@
     $("st").className = "state " + stCls;
     $("lamp").className = "lamp " + stCls;
     $("l1-sub").textContent = down ? "" : modeText;
+
+    // ---- 底部按钮的条件可见性(需要时才提供) ----
+    // 恢复自动选优:仅钉住状态有意义(把出口交还回 AUTO 自动选优)
+    // 重启内核:保底按钮,仅内核异常或状态失联(正常时 launchd 自管,永远用不到)
+    $("a-handoff").hidden = !(g.pinned && !down);
+    $("a-restart").hidden = !(d.reason === "kernel_down" || d.reason === "status_unknown");
 
     // ---- 节点总览表(出口=「使用中」标记+整行高亮,唯一出口信息) ----
     renderTable(g, exitShort);

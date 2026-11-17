@@ -85,14 +85,22 @@ const { chromium } = require('playwright');
   const out = await page.evaluate(async () => {
     const s = await fetch('/api/status').then(r => r.json());
     const win = document.querySelector('.win').getBoundingClientRect();
-    return { level: s.derived.level, w: win.width,
+    const down = s.derived.level === 'red' && ['kernel_down','all_dead','no_nodes'].includes(s.derived.reason);
+    return { level: s.derived.level, reason: s.derived.reason, w: win.width,
              state: document.getElementById('st-text').textContent,
-             rows: document.querySelectorAll('#rows tr').length };
+             rows: document.querySelectorAll('#rows tr').length,
+             pinned: s.groups.pinned,
+             handoffHidden: document.getElementById('a-handoff').hidden,
+             restartHidden: document.getElementById('a-restart').hidden,
+             expectHandoffHidden: !(s.groups.pinned && !down),
+             expectRestartHidden: !['kernel_down','status_unknown'].includes(s.derived.reason) };
   });
   const checks = [];
   checks.push(['宽度自适应在 460~720(当前 ' + Math.round(out.w) + ',态 ' + out.level + ')', out.w >= 460 && out.w <= 720]);
   checks.push(['状态文案非空: ' + out.state, out.state.length > 1]);
   checks.push(['明细平铺常驻:节点表 ' + out.rows + ' 行', out.rows >= 1]);
+  checks.push(['恢复自动选优按钮条件显示(' + (out.expectHandoffHidden ? '非钉住,应隐藏' : '钉住,应显示') + ')', out.handoffHidden === out.expectHandoffHidden]);
+  checks.push(['重启内核按钮条件显示(' + (out.expectRestartHidden ? '正常态,应隐藏' : '内核异常,应显示') + ')', out.restartHidden === out.expectRestartHidden]);
   await page.click('#a-history');
   await page.waitForTimeout(800);
   const hist = await page.evaluate(() => ({
@@ -117,7 +125,7 @@ if 'fatal' in r: print('  ✗ UI 测试失败:', r['fatal']); sys.exit(1)
 for name, passed in r['checks']:
     print(('  ✓ ' if passed else '  ✗ ') + name)
     if not passed: sys.exit(1)
-"; then PASS=$((PASS+5)); else FAIL=$((FAIL+1)); fi
+"; then PASS=$((PASS+8)); else FAIL=$((FAIL+1)); fi
 
 echo
 echo "结果: $PASS 通过 / $FAIL 失败"
