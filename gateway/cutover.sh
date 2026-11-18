@@ -128,13 +128,22 @@ for i in $(seq 1 15); do
 done
 scutil --proxy | grep -q "7897" || die "系统代理未指向 7897(守护未生效,查看 bridge 日志)"
 
-curl -sf http://127.0.0.1:7900/api/status | python3 -c "
+# 桥的守护线程 30s 一拍,单次读回可能落在传播延迟/瞬时监测抖动的毒窗里;
+# 轮询最多 ~48s(覆盖一个守护周期)再下结论,避免误判回滚。
+SYSOK=""
+for i in $(seq 1 24); do
+  if curl -sf http://127.0.0.1:7900/api/status | python3 -c "
 import json,sys
 d = json.load(sys.stdin)
 assert d['kernel']['port'] == 7897
 assert d['sysproxy']['apply_mode'] == 'active'
 assert d['sysproxy']['applied'] and d['sysproxy']['ok'], '系统代理尚未验证生效'
-print('  桥接状态:', d['derived']['level'], '/', d['sysproxy']['applied'])"
+print('  桥接状态:', d['derived']['level'], '/', d['sysproxy']['applied'])"; then
+    SYSOK=1; break
+  fi
+  sleep 2
+done
+[[ -n "$SYSOK" ]] || die "桥接状态断言未通过(查看 fx-bridge 日志)"
 
 STAGE="done"
 trap - EXIT INT TERM

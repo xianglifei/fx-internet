@@ -276,7 +276,15 @@ def guard_once():
                         SYS.update(ok=False, applied=False, error=err,
                                    requires_admin=err == "requires_admin", ts=time.time())
                         return
-                    applied = proxy_matches(read_sysproxy())
+                    # networksetup 写入后 scutil 汇总有亚秒级传播延迟,立即回读可能
+                    # 假阴性并把 SYS 毒化 30s(守护下一拍才自愈),cutover 断言会误判。
+                    # 改为短轮询回读,给传播留时间;真写失败仍会在轮询耗尽后报错。
+                    applied = False
+                    for _ in range(12):
+                        time.sleep(0.5)
+                        if proxy_matches(read_sysproxy()):
+                            applied = True
+                            break
                     if not applied:
                         raise RuntimeError("系统代理写入后验证失败")
             else:
