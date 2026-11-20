@@ -167,6 +167,8 @@ proxy-groups:
     tolerance: 50
 
 rules:
+  # 指定直连:invite.linuxdo.org 的 Cloudflare 回源对机房 IP 一律 403,仅直连可用
+  - DOMAIN,invite.linuxdo.org,DIRECT
   - GEOSITE,private,DIRECT
   - GEOSITE,cn,DIRECT
   - GEOIP,private,DIRECT,no-resolve

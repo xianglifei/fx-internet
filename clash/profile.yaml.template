@@ -54,6 +54,10 @@ proxy-groups:
     tolerance: 50
 
 rules:
+  # 指定直连(逐个域名白名单,不做后缀匹配,避免波及同站其他页面)
+  # invite.linuxdo.org:Cloudflare 回源对本机全部 6 个 JMS 节点(US/JP/NL)一律 403,
+  # 属机房 IP 拦截;只有直连 200。linuxdo.org 主站直连超时,仍需走 PROXY。
+  - DOMAIN,invite.linuxdo.org,DIRECT
   - GEOSITE,private,DIRECT
   - GEOSITE,cn,DIRECT
   - GEOIP,private,DIRECT,no-resolve
